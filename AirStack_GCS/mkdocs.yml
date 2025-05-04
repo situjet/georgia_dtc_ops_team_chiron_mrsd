@@ -1,0 +1,163 @@
+---
+copyright: Copyright &copy; 2024 - 2030 AirLab CMU
+docs_dir: .
+site_name: AirStack
+site_dir: ../site
+site_url: 'https://docs.theairlab.org/docs/'  # Trailing slash is recommended
+exclude_docs: |
+  **/ros_ws/build
+  **/ros_ws/install
+  **/kit-app-template/**
+extra:
+  version:
+    provider: mike
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/castacks
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/airlabcmu
+extra_css:
+  - stylesheets/extra.css
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.magiclink
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - toc:
+      permalink: true
+nav:
+  - Home: docs/index.md
+  - Getting Started: docs/getting_started.md
+  - Development:
+      - docs/development/index.md
+      - docs/development/docker_usage.md
+      - docs/development/vscode/index.md
+      - docs/development/project_configuration.md
+      - Testing:
+          - docs/development/testing/index.md
+          - docs/development/testing/testing_frameworks.md
+          - docs/development/testing/integration_testing.md
+          - docs/development/testing/unit_testing.md
+          - docs/development/testing/system_testing.md
+          - docs/development/testing/ci_cd.md
+      - docs/development/contributing.md
+      - docs/development/frame_conventions.md
+  - Robot:
+      - docs/robot/index.md
+      - Autonomy Modules:
+          - Robot Interface: 
+              - docs/robot/autonomy/0_interface/index.md
+          - Sensors:
+              - docs/robot/autonomy/1_sensors/index.md
+              - docs/robot/autonomy/1_sensors/gimbal.md              
+          - Perception:
+              - docs/robot/autonomy/2_perception/index.md
+              - docs/robot/autonomy/2_perception/state_estimation.md
+          - Local:
+              - docs/robot/autonomy/3_local/index.md
+              - World Model:
+                - docs/robot/autonomy/3_local/world_model/index.md
+                - DROAN (Obstacle Avoidance World Model):
+                  - robot/ros_ws/src/autonomy/3_local/a_world_models/disparity_expansion/README.md
+                  - robot/ros_ws/src/autonomy/3_local/a_world_models/disparity_graph/README.md
+                  - robot/ros_ws/src/autonomy/3_local/a_world_models/disparity_graph_cost_map/README.md
+              - Planning:
+                - docs/robot/autonomy/3_local/planning/index.md
+                - robot/ros_ws/src/autonomy/3_local/b_planners/trajectory_library/README.md
+                - robot/ros_ws/src/autonomy/3_local/b_planners/takeoff_landing_planner/README.md
+                - DROAN (Obstacle Avoidance Planner):
+                  - robot/ros_ws/src/autonomy/3_local/b_planners/droan_local_planner/README.md
+              - Controls:
+                - docs/robot/autonomy/3_local/controls/index.md
+                - robot/ros_ws/src/autonomy/3_local/c_controls/trajectory_controller/README.md
+          - Global:
+              - docs/robot/autonomy/4_global/index.md
+              - World Model:
+                - docs/robot/autonomy/4_global/world_model/index.md
+                - robot/ros_ws/src/autonomy/4_global/a_world_models/vdb_mapping_ros2/README.md
+              - Planning:
+                - docs/robot/autonomy/4_global/planning/index.md
+                - robot/ros_ws/src/autonomy/4_global/b_planners/random_walk/README.md
+          - Behavior:
+              - docs/robot/autonomy/5_behavior/index.md
+              - docs/robot/autonomy/5_behavior/behavior_tree.md
+              - docs/robot/autonomy/5_behavior/behavior_executive.md
+      - Static Transforms:
+          - docs/robot/static_transforms/index.md
+      - Logging:
+          - docs/robot/logging/index.md
+  - Ground Control Station:
+      - docs/ground_control_station/index.md
+      - Usage:
+          - docs/ground_control_station/usage/user_interface.md
+      - Multi-Robot:
+          - docs/ground_control_station/multi_robot/multi_robot.md
+  - Simulation:
+      - docs/simulation/index.md
+      - Isaac Sim:
+          - docs/simulation/isaac_sim/index.md
+          - docs/simulation/isaac_sim/export_stages_from_unreal.md
+          - docs/simulation/isaac_sim/scene_setup.md
+          - docs/simulation/isaac_sim/ascent_sitl_extension.md
+  - Real World:
+      - docs/real_world/index.md
+      - docs/real_world/data_offloading/index.md
+      - Installation on Hardware:
+          - docs/real_world/installation/index.md
+  - About: docs/about.md
+plugins:
+  - search
+  - same-dir
+  - redirects:
+      redirect_maps:
+        'README.md': 'docs/README.md'
+repo_name: castacks/AirStack
+repo_url: https://github.com/castacks/AirStack
+theme:
+  favicon: docs/assets/StackedWhite.png
+  custom_dir: docs/overrides
+  features:
+    - navigation.indexes
+    - navigation.path
+    - navigation.tabs
+    # - navigation.expand
+    - navigation.footer
+    - navigation.top
+    - navigation.sections
+    - search.highlight
+    - search.suggest
+    - toc.integrate
+    - toc.follow
+    - content.code.copy
+  logo: docs/assets/logo_horizontal_white.png
+  name: material
+  palette:
+    - accent: pink
+      primary: custom
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - accent: pink
+      primary: custom
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode

@@ -1,0 +1,22 @@
+/**:
+  ros__parameters:
+    # plugin_denylist:
+    #   common
+
+      # extras
+      # - image_pub
+      # - vibration
+      # - distance_sensor
+      # - rangefinder
+      # - wheel_odometry
+
+    plugin_allowlist:
+      - '*set_mode*'
+      - 'time_*'
+      - imu
+      - state
+      - global_position
+      - geofence
+      - 'mission'
+      - 'cmd'
+      - 'waypoint'

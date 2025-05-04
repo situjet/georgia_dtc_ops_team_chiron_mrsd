@@ -1,0 +1,26 @@
+<!-- ROBOT -->
+<launch>
+  <push_ros_namespace namespace="$(env ROBOT_NAME)" />
+
+  <!-- TODO: parameterize this -->
+  <set_parameter name="use_sim_time" value="true" />
+
+  <!-- Static TFs -->
+  <!-- <include file="$(find-pkg-share robot_bringup)/launch/static_transforms.launch.xml" /> -->
+
+  <!-- Autonomy -->
+  <!-- <include file="/root/ros_ws/src/autonomy/autonomy_bringup/launch/autonomy.launch.xml" /> -->
+
+  <!-- Logging -->
+  <!-- <include file="/root/ros_ws/src/logging/logging_bringup/launch/logging.launch.xml" /> -->
+  <include file="/root/ros_ws/src/autonomy/0_interface/mavros_interface/launch/px4.launch" />
+  <!-- <include file="/root/ros_ws/install/behavior_bringup/share/behavior_bringup/launch/behavior.launch.xml" /> -->
+
+  <node pkg="domain_bridge" exec="domain_bridge"
+    args="/root/ros_ws/src/robot_bringup/params/domain_bridge.yaml"
+    output="screen" respawn="true" respawn_delay="1" />
+
+  <!-- GUI -->
+
+
+</launch>

@@ -1,0 +1,20 @@
+groups:
+  - Commands:
+    - AutoTakeoff:
+        condition_name: Auto Takeoff Commanded
+    - AutoLand:
+        condition_name: AutoLand Commanded
+    - Arm:
+        condition_name: Arm Commanded
+    - Disarm:
+        condition_name: Disarm Commanded
+    - E-Stop:
+        condition_name: EStop Commanded
+    - Survey:
+        condition_name: Survey Commanded
+    - Search:
+        condition_name: Search Commanded
+    - Geofence Mapping:
+        condition_name: Geofence Mapping Commanded
+
+

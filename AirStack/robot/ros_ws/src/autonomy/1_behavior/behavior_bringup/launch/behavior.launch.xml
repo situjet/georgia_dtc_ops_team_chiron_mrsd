@@ -1,0 +1,50 @@
+<launch>
+    <!-- 
+        Behavior Module Group - All components under /behavior namespace
+        Purpose: Logical isolation of decision-making components
+    -->
+
+    <group>
+        <push-ros-namespace namespace="behavior" />
+        <!-- GUI interface -->
+
+        <!-- Behavior Tree Implementation Low-Level Logic-->
+        <node pkg="behavior_tree" exec="behavior_tree_implementation">
+            <param name="config" value="$(find-pkg-share behavior_tree)/config/drone.tree" />
+            <param name="timeout" value="1.0" />
+        </node>
+
+        <!-- Behavior Execution High-Level Logic -->
+        <node pkg="behavior_executive" exec="behavior_executive"
+            output="screen">
+            <!-- 
+                Behavior Executive Node
+                Remapping Rules:
+                - Convert node's internal names to system-wide physical names
+                - ${ROBOT_NAME} enables multi-robot deployment (e.g. drone1 vs drone2)
+                Pattern: <remap from="logical_name" to="/physical/namespace/name"/>
+            -->
+            <remap from="behavior_tree_commands" to="/$(env ROBOT_NAME)/behavior/behavior_tree_commands" />
+
+            <!-- NEED TO CHECK -->    
+            <!-- <remap from="is_armed" to="/$(env ROBOT_NAME)/mavros/state" /> -->
+            <remap from="mavros/cmd/takeoff" to="/$(env ROBOT_NAME)/mavros/cmd/takeoff" />
+            <remap from="mavros/mission/push" to="/$(env ROBOT_NAME)/mavros/mission/push" />
+            <remap from="mavros/state" to="/$(env ROBOT_NAME)/mavros/state" />
+            <remap from="mavros/global_position/rel_alt" to="/$(env ROBOT_NAME)/mavros/global_position/rel_alt" />
+            <remap from="mavros/set_mode" to="/$(env ROBOT_NAME)/mavros/set_mode" />
+            <remap from="mavros/cmd/arming" to="/$(env ROBOT_NAME)/mavros/cmd/arming" />
+            <remap from="mavros/cmd/land" to="/$(env ROBOT_NAME)/mavros/cmd/land" />
+            <!-- <remap from="mavros/mission/clear" to="/$(env ROBOT_NAME)/mavros/mission/clear" /> -->
+            <remap from="mavros/global_position/global" to="/$(env ROBOT_NAME)/mavros/global_position/global" />
+            <!-- <remap from="mavros/geofence/fences" to="/$(env ROBOT_NAME)/mavros/geofence/fences" /> -->
+            <!-- place holder topics for later usage-->
+            <remap from="target_waypoint" to="/$(env ROBOT_NAME)/interface/target_waypoint" />
+            <remap from="set_target_altitude" to="/$(env ROBOT_NAME)/interface/set_target_altitude" />
+        </node>
+
+    </group>
+</launch>
+
+
+

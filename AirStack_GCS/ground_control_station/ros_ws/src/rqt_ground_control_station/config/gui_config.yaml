@@ -1,0 +1,22 @@
+groups:
+  - commands:
+    - Auto Takeoff:
+        condition_name: Auto Takeoff Commanded
+    - Auto Land:
+        condition_name: AutoLand Commanded
+    - Arm:
+        condition_name: Arm Commanded
+    - Disarm:
+        condition_name: Disarm Commanded
+    - EStop:
+        condition_name: EStop Commanded
+    - Search:
+        condition_name: Search Commanded
+    - Survey:
+        condition_name: Survey Commanded
+    - Ascend:
+        condition_name: Ascend Commanded
+    - Geofence Mapping:
+        condition_name: Geofence Mapping Commanded
+robots: # these should match a robot's namespace
+ - robot_1
