@@ -1,0 +1,26 @@
+version: '3'
+services:
+  ros2:
+    image: arm64v8/ros:humble-ros-base
+    # 或者使用
+    # shouldn't be 35.4, we are on l4t 36.1
+    # image: dustynv/ros:humble-ros-base-l4t-r35.3.1 
+    container_name: ros2_gimbal_ws
+    network_mode: host
+    environment:
+      - DISPLAY=$DISPLAY
+      - QT_X11_NO_MITSHM=1
+      - XAUTHORITY=/root/.Xauthority
+    volumes:
+      - ../ros2_gimbal_ws:/root/ros2_gimbal_ws:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+    runtime: nvidia  # 为Jetson添加nvidia运行时
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    stdin_open: true
+    tty: true
+    command: /bin/bash -c "source /opt/ros/humble/setup.bash && cd /root/ros2_gimbal_ws && bash"

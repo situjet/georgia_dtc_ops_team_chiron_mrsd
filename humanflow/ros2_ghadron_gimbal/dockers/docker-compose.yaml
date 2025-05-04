@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  ros2_gimbal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: dustynv/l4t-pytorch:r36.4.0
+    container_name: ros2_gimbal_container
+    volumes:
+      # Mount local workspace to container
+      - /home/dtc/humanflow/ros2_ghadron_gimbal:/home/dtc/humanflow/ros2_ghadron_gimbal
+      - /home/dtc/humanflow/ros2_ghadron_gimbal/src/PayloadSdk:/home/dtc/humanflow/ros2_ghadron_gimbal/src/PayloadSdk
+      # MCAP data volume
+      - /home/dtc/humanflow/mcap_data:/home/dtc/humanflow/mcap_data
+    network_mode: host
+
+    # 启用GPU支持
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    # 环境变量
+    environment:
+      - "DISPLAY=${DISPLAY}"
+      - "QT_X11_NO_MITSHM=1"
+      - "NVIDIA_VISIBLE_DEVICES=all"
+      - "NVIDIA_DRIVER_CAPABILITIES=all"
+      # 添加 ROS_DOMAIN_ID 确保消息正确路由
+      - "ROS_DOMAIN_ID=70"
+      # 启用 ROS 日志着色增强调试体验
+      - "RCUTILS_COLORIZED_OUTPUT=1"
+      # 设置更高的日志级别以便调试
+      - "RCUTILS_CONSOLE_OUTPUT_FORMAT=[{severity}] [{name}]: {message}"
+      - "RCUTILS_LOGGING_USE_STDOUT=1"
+      - "RCUTILS_LOGGING_BUFFERED_STREAM=1"
+      - "PYTHONWARNINGS=ignore::RuntimeWarning"
+    # 特权模式，如果需要访问设备如相机
+    privileged: true
+    # 工作目录
+    working_dir: /home/dtc/humanflow/ros2_ghadron_gimbal
+    # 修改启动命令，添加ROS2环境到bashrc和一些调试工具，并修复权限问题
+    command: >
+      bash -c "
+        set -e  # Exit on error to help debug issues
+        
+        # Fix permissions
+        chmod -R 775 /home/dtc/humanflow/ros2_ghadron_gimbal/dockers &&
+        
+        # Create and set MCAP recording directory permissions
+        mkdir -p /home/dtc/humanflow/mcap_data &&
+        chmod -R 777 /home/dtc/humanflow/mcap_data &&
+        
+        # Set up ROS2 environment
+        echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc &&
+        echo 'source /home/dtc/humanflow/ros2_ghadron_gimbal/install/setup.bash 2>/dev/null || true' >> ~/.bashrc &&
+        
+        # Update aliases
+        echo 'alias check_mcap=\"find /home/dtc/humanflow/mcap_data -type f -name \"*.mcap\" -exec ls -lh {} \\;\"' >> ~/.bashrc &&
+        echo 'alias play_mcap=\"ros2 bag play\"' >> ~/.bashrc &&
+        echo 'alias check_topics=\"ros2 topic list\"' >> ~/.bashrc &&
+        echo 'alias fix_permissions=\"chown -R $(id -u):$(id -g) /home/dtc/humanflow/ros2_ghadron_gimbal\"' >> ~/.bashrc &&
+        
+        # Set FastDDS configuration file path in .bashrc so it persists
+        echo 'export FASTRTPS_DEFAULT_PROFILES_FILE=/home/dtc/humanflow/ros2_ghadron_gimbal/fastdds.xml' >> ~/.bashrc &&
+        
+        # Ensure ROS2 CLI tools are installed
+        # apt-get update && apt-get install -y ros-humble-ros-base python3-argcomplete &&
+        
+        # Source ROS2 environment 
+        source /opt/ros/humble/setup.bash &&
+        export PATH=$PATH:/opt/ros/humble/bin &&
+        [ -f /home/dtc/humanflow/ros2_ghadron_gimbal/install/setup.bash ] && source /home/dtc/humanflow/ros2_ghadron_gimbal/install/setup.bash || true &&
+        
+        # Set FastDDS configuration for current session
+        export FASTRTPS_DEFAULT_PROFILES_FILE=/home/dtc/humanflow/ros2_ghadron_gimbal/fastdds.xml &&
+        
+        # Keep container running
+        exec bash -c 'while true; do sleep 30; done'
+      "
+    
+    # 容器重启策略
+    restart: "no"
+
+# docker compose -f docker-compose.yaml down
+# docker compose -f docker-compose.yaml up -d
+
+# networks:
+#   airstack_network:
+#     ipam:
+#       config:
+#         - subnet: 172.32.0.0/24
+#           # gateway: 172.32.0.1

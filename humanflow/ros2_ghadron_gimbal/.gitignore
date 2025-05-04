@@ -1,0 +1,17 @@
+# ROS2 相关
+build/
+install/
+log/
+.pytest_cache/
+
+# 大型模型文件
+models/*.pt
+models/*.onnx
+models/*.torchscript
+models/*.tflite
+models/*.mlmodel
+
+# MCAP 数据文件
+mcap_data/
+mcap_recording/
+

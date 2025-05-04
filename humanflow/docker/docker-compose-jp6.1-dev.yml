@@ -1,0 +1,38 @@
+services:
+  humanflow:
+    image: theairlab/humanflow:v1.0.0_ARM
+    container_name: humanflow
+    build:
+      context: .
+      dockerfile: humanflow-dev.Dockerfile
+      args:
+        BASE_IMAGE: theairlab/darpa-triage:jp6.1-02-ros2
+        ROS_BUILD_FROM_SOURCE: "false"
+        ROS_WS_DIR: ${ROS_WS_DIR}
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    network_mode: host
+    environment:
+      - DATA=/home/airlab
+      - ROS_WS_DIR=${ROS_WS_DIR}
+      - ROBOT_NAME=${ROBOT_NAME}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID}
+      - XAUTHORITY=/root/.Xauthority  # Ensure X11 uses the correct authority file
+      - DEVICE_TYPE=orin_nx
+    volumes:
+      - ../ros2_gimbal_ws:/root/ros_ws:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ./.bashrc:/root/.bashrc:rw
+      - ./.bash_history:/root/.bash_history:rw
+      - /dev:/dev
+      - /run/jtop.sock:/run/jtop.sock
+    stdin_open: true
+    tty: true
+    command: /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build --symlink-install && source ~/ros_ws/install/setup.bash && tail -f /dev/null"
+
