@@ -649,11 +649,7 @@ void BehaviorExecutive::timer_callback() {
                     this->get_logger(),
                     "[SEARCH INFO] USING RAY-CASTING ESTIMATED GPS LOCATION FOR SEARCH CENTER");
             }
-            center_lat = 40.4779091;  // current_latitude;
-            center_lon = -79.8927102;
-            // hard coded hawkins center
-            // center_lat = 40.47781;
-            // center_lon = -79.89271;
+
             search_waypoints = generate_circle_waypoints(center_lat, center_lon, radius,
                                                          perimeter_points, target_ascend_altitude);
             // std::vector<sensor_msgs::msg::NavSatFix> search_waypoints;
@@ -705,15 +701,11 @@ void BehaviorExecutive::timer_callback() {
                 center_lon = -79.8927102;  // current_longitude;
                 RCLCPP_INFO(this->get_logger(), "Using current drone location for survey center.");
             }
-            center_lat = 40.4779091;  // current_latitude;
-            center_lon = -79.8927102;
+
             // Now center_lat and center_lon are accessible here
             RCLCPP_INFO(this->get_logger(), "Center point for the hexagon: lat=%f, lon=%f",
                         center_lat, center_lon);
 
-            // force to be a fixed value (if needed)
-            // center_lat = 40.425221;
-            // center_lon = -79.954328;
 
             // Constants for conversion between meters and lat/lon
             // These are approximations for the given latitude
