@@ -26,7 +26,7 @@ from collections import deque
 from rclpy.executors import MultiThreadedExecutor
 import traceback # <<< ADDED IMPORT
 
-# import performance analysis module
+# import the profiler module
 from .profiler import ProfileManager, FunctionProfiler, ResourceMonitor
 
 # --- Add Haversine distance function here ---
@@ -51,27 +51,24 @@ class IntegratedNode(Node):
     def __init__(self):
         super().__init__('integrated_node')
 
-        # initialize performance analysis manager
+        # initialize the profiler manager
         self.profile_manager = ProfileManager(output_dir='/home/dtc/humanflow/ros2_ghadron_gimbal/profiling_results')
         self.function_profiler = self.profile_manager.function_profiler
         
-        # add performance analysis parameter
         self.declare_parameter('enable_profiling', True, 
             ParameterDescriptor(type=ParameterType.PARAMETER_BOOL, 
                                 description='Enable performance profiling'))
         self.profiling_enabled = self.get_parameter('enable_profiling').value
         
-        # add performance analysis report frequency parameter
         self.declare_parameter('profiling_report_interval', 300.0, 
             ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE, 
                                 description='Interval (seconds) between profiling reports'))
         self.profiling_report_interval = self.get_parameter('profiling_report_interval').value
         
-        # if performance profiling is enabled, start profiling
         if self.profiling_enabled:
             self.get_logger().info("Starting performance profiling")
             self.profile_manager.start_profiling()
-            # create a timer to generate performance reports periodically
+            # create a timer to generate profiling reports periodically
             self.profiling_timer = self.create_timer(self.profiling_report_interval, self._generate_profiling_report)
 
         # QoS profile for image transport - use BEST_EFFORT for lower latency
@@ -83,10 +80,10 @@ class IntegratedNode(Node):
 
         # Use standard ROS2 compressed image topics instead of image_transport
         # This is the raw image publisher (usually not used with high latency links)
-        # self.image_pub = self.create_publisher(
-        #     Image, 'image_raw', 
-        #     qos_profile=image_qos
-        # )
+        self.image_pub = self.create_publisher(
+            Image, '/camera/image_raw', 
+            qos_profile=image_qos
+        )
         
         # This is the compressed image publisher - most subscribers will use this
         self.compressed_image_pub = self.create_publisher(
@@ -95,7 +92,7 @@ class IntegratedNode(Node):
         )
 
         self.detection_pub = self.create_publisher(Detection2DArray, '/detection', 10)
-        # add a new publisher to publish the detection center coordinates
+        # add a new publisher for publishing the detection center coordinates
         self.detection_center_pub = self.create_publisher(Vector3, '/detection_center', 10)
         # self.pose_pub = self.create_publisher(HumanPoseArray17, '/human_pose', 10)
 
@@ -117,6 +114,10 @@ class IntegratedNode(Node):
         
         # Add subscription for gimbal mode
         self.gimbal_mode_sub = self.create_subscription(String, '/gimbal_mode', self.gimbal_mode_callback, 10)
+
+        # Add subscription for gimbal attitude
+        self.gimbal_attitude_sub = self.create_subscription(Vector3, '/gimbal_attitude', self.gimbal_attitude_callback, sensor_qos)
+        self.current_gimbal_attitude = Vector3()  # Initialize with zeros
 
         # Comment out the subscriptions for gimbal control
         # self.spin_sub = self.create_subscription(Bool, 'gimbal/spin', self.spin_loop, 10)
@@ -141,6 +142,14 @@ class IntegratedNode(Node):
         self.current_gps = None
         self.current_height = None
         self.current_heading = None
+        self.latest_frame = None
+        self.latest_frame_timestamp = None
+        
+        # Deques to store recent sensor readings with timestamps
+        self.gps_readings = deque(maxlen=20)
+        self.height_readings = deque(maxlen=20)
+        self.heading_readings = deque(maxlen=20)
+        self.gimbal_attitude_readings = deque(maxlen=20)
         
         # Gimbal mode state
         self.current_gimbal_mode = "OFF" # Default mode, adjust if needed
@@ -171,7 +180,7 @@ class IntegratedNode(Node):
         self.video_writer = None
         
         # Add compression quality parameter
-        self.declare_parameter('jpeg_quality', 30, 
+        self.declare_parameter('jpeg_quality', 10, 
             ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER, 
                                description='JPEG compression quality (0-100)'))
         self.jpeg_quality = self.get_parameter('jpeg_quality').value
@@ -196,7 +205,7 @@ class IntegratedNode(Node):
 
         # <<< ADDED PARAMETER >>>
         # Parameter to control maximum allowed total time difference between frame and sensors
-        self.declare_parameter('max_sync_time_diff', 1.5, # Default to 1.5 seconds (Increased from 0.5)
+        self.declare_parameter('max_sync_time_diff', 0.2, # Default to 0.2 seconds 
             ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
                               description='Maximum total time difference (seconds) allowed between frame and sensor data for processing'))
         self.max_sync_time_diff = self.get_parameter('max_sync_time_diff').value
@@ -218,47 +227,18 @@ class IntegratedNode(Node):
         self.log_interval = 5.0  # Log every 5 seconds
 
         # Add variables to control frame rate
-        self.detection_fps = 3  # Target FPS for detection
+        self.detection_fps = 10  # Target FPS for detection
         self.last_detection_time = 0  # Timestamp of last detection
         
         # GPSEstimator will be initialized in start() after getting image dimensions
         self.gps_manager = None
         self.image_center = None
 
-        # Add buffer to store timestamped sensor data
-        # Parameter for sensor buffer size
-        self.declare_parameter('sensor_buffer_size', 200,
-            ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
-                              description='Maximum number of sensor readings to buffer'))
-        self.sensor_buffer_size = self.get_parameter('sensor_buffer_size').value
-        self.max_timestamp_diff = 0.1  # Maximum timestamp difference (seconds) - warn if exceeded
-        
-        # Unified sensor data buffer, each element is a tuple: (timestamp, sensor_type, data)
-        # sensor_type can be 'gps', 'height', 'heading', etc.
-        # data format depends on sensor_type: (lat, lon) for 'gps', float for 'height'/'heading'
-        self.sensor_buffer = deque(maxlen=self.sensor_buffer_size)
-
-        # Sensor data lock to prevent buffer modification during search
-        self.sensor_buffer_lock = threading.Lock()
-
-        # Add variable to record the GPS estimation method used
-        self.last_gps_estimation_method = "unknown"
-
-        # buffer to store the latest 6 frames
-        self.frame_buffer = deque(maxlen=12)  # 2 fps per second, 3 seconds
-        self.frame_buffer_lock = threading.Lock()
-        
-        # declare parameter to control the frame buffer size
-        self.declare_parameter('frame_buffer_duration', 3.0,
-            ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
-                                description='duration (seconds) to store frames in the buffer'))
-        self.frame_buffer_duration = self.get_parameter('frame_buffer_duration').value
-
         self.start()
 
-    #add performance report generation function
+    # add a function to generate and save the profiling report
     def _generate_profiling_report(self):
-        """generate and save performance analysis report"""
+        """generate and save the profiling report"""
         if not self.profiling_enabled:
             return
             
@@ -266,140 +246,56 @@ class IntegratedNode(Node):
             report_path = self.profile_manager.save_results()
             self.get_logger().info(f"Generated profiling report: {report_path}")
             
-            # print key performance metrics to log
+            # print the key performance metrics to the log
             res_stats = self.profile_manager.resource_monitor.get_stats()
-            self.get_logger().info(f"performance metrics summary - CPU: {res_stats['cpu']['avg']:.2f}% (max: {res_stats['cpu']['max']:.2f}%), "
+            self.get_logger().info(f"performance metrics - CPU: {res_stats['cpu']['avg']:.2f}% (max: {res_stats['cpu']['max']:.2f}%), "
                                  f"memory: {res_stats['memory']['avg']:.2f}MB (max: {res_stats['memory']['max']:.2f}MB), "
                                  f"thread count: {res_stats['threads']['latest']}")
         except Exception as e:
             self.get_logger().error(f"Error generating profiling report: {e}")
             traceback.print_exc()
 
-    # use decorator to profile key functions
+    # use the decorator to profile the key functions
     @property
     def profile(self):
         return self.function_profiler
 
-    # Navigation data callbacks
+    # Navigation data callbacks - simplified to just update current values
     @FunctionProfiler()
     def gps_callback(self, msg):
-        callback_start_time = time.time() # <<< TIMER START
-        # Use time.time() as the current timestamp
-        current_timestamp = time.time()
-        self.latest_gps_timestamp = current_timestamp  # record the timestamp of the latest GPS data
-        
-        # Store timestamped GPS data in the unified sensor buffer
-        buffer_lock_start = time.time() # <<< TIMER START
-        with self.sensor_buffer_lock:
-            # Add current GPS data to buffer
-            gps_data = (msg.latitude, msg.longitude)
-            self.sensor_buffer.append((current_timestamp, 'gps', gps_data))
-            # Optionally update current value for immediate access if needed elsewhere
-            self.current_gps = gps_data
-        buffer_lock_duration = time.time() - buffer_lock_start # <<< TIMER END
-        
-        callback_duration = time.time() - callback_start_time # <<< TIMER END
-        self.get_logger().debug(f"gps_callback: Total processing time: {callback_duration:.6f}s (buffer lock: {buffer_lock_duration:.6f}s)")
+        callback_start_time = time.time()
+        # Just store the latest GPS data
+        self.current_gps = (msg.latitude, msg.longitude)
+        callback_duration = time.time() - callback_start_time
+        self.get_logger().debug(f"gps_callback: Total processing time: {callback_duration:.6f}s")
+
+        # Store timestamped reading
+        ros_time_sec = self.get_clock().now().nanoseconds / 1e9
+        self.gps_readings.append((ros_time_sec, (msg.latitude, msg.longitude)))
 
     @FunctionProfiler()
     def height_callback(self, msg):
-        callback_start_time = time.time() # <<< TIMER START
-        current_timestamp = time.time()
-        self.latest_height_timestamp = current_timestamp  # record the timestamp of the latest height data
-        
-        # Store timestamped Height data in the unified sensor buffer
-        buffer_lock_start = time.time() # <<< TIMER START
-        with self.sensor_buffer_lock:
-            height_data = msg.data
-            self.sensor_buffer.append((current_timestamp, 'height', height_data))
-            # Optionally update current value
-            self.current_height = height_data
-        buffer_lock_duration = time.time() - buffer_lock_start # <<< TIMER END
-        
-        callback_duration = time.time() - callback_start_time # <<< TIMER END
-        self.get_logger().debug(f"height_callback: Total processing time: {callback_duration:.6f}s (buffer lock: {buffer_lock_duration:.6f}s)")
+        callback_start_time = time.time()
+        # Just store the latest height data
+        self.current_height = msg.data
+        callback_duration = time.time() - callback_start_time
+        self.get_logger().debug(f"height_callback: Total processing time: {callback_duration:.6f}s")
+
+        # Store timestamped reading
+        ros_time_sec = self.get_clock().now().nanoseconds / 1e9
+        self.height_readings.append((ros_time_sec, msg.data))
 
     @FunctionProfiler()
     def heading_callback(self, msg):
-        """Callback for heading data."""
-        callback_start_time = time.time() # <<< TIMER START
-        current_timestamp = time.time()
-        self.latest_heading_timestamp = current_timestamp  # record the timestamp of the latest heading data
-        
-        # Store timestamped Heading data in the unified sensor buffer
-        buffer_lock_start = time.time() # <<< TIMER START
-        with self.sensor_buffer_lock:
-            heading_data = msg.data
-            self.sensor_buffer.append((current_timestamp, 'heading', heading_data))
-            # Optionally update current value
-            self.current_heading = heading_data
-        buffer_lock_duration = time.time() - buffer_lock_start # <<< TIMER END
-        
-        callback_duration = time.time() - callback_start_time # <<< TIMER END
-        self.get_logger().debug(f"heading_callback: Total processing time: {callback_duration:.6f}s (buffer lock: {buffer_lock_duration:.6f}s)")
+        callback_start_time = time.time()
+        # Just store the latest heading data
+        self.current_heading = msg.data
+        callback_duration = time.time() - callback_start_time
+        self.get_logger().debug(f"heading_callback: Total processing time: {callback_duration:.6f}s")
 
-    # return the closest data, timestamp, time difference, and whether the data is ahead of the target timestamp
-    def _find_closest_data(self, buffer_copy, target_timestamp, sensor_type):
-        """Find the data of a specific sensor_type in buffer_copy closest to the target timestamp"""
-        func_start_time = time.time() # <<< TIMER START
-        closest_data = None
-        closest_timestamp = None
-        min_diff = float('inf')
-        found = False
-        is_ahead = None  #
-        search_iterations = 0 # <<< COUNTER
-        sensor_entries = 0 # record the number of entries for the specific type of sensor
-        iteration_time = 0 # iteration time
-
-        # calculate the buffer size
-        buffer_size = len(buffer_copy)
-
-        # Iterate backwards over the provided buffer copy
-        iterate_start = time.time()
-        for ts, stype, data in reversed(buffer_copy):
-            search_iterations += 1 # <<< COUNTER
-            iter_start = time.time()
-            
-            if stype == sensor_type:
-                sensor_entries += 1
-                diff = abs(ts - target_timestamp)
-                if diff < min_diff:
-                    min_diff = diff
-                    closest_data = data
-                    closest_timestamp = ts
-                    is_ahead = (ts > target_timestamp)  # determine if the sensor timestamp is ahead of the target timestamp
-                    found = True
-                elif found and ts < target_timestamp - min_diff:
-                     break
-            
-            iter_time = time.time() - iter_start
-            iteration_time += iter_time
-
-        iterate_time = time.time() - iterate_start
-        func_duration = time.time() - func_start_time # <<< TIMER END
-        
-        # only record detailed time for debug level
-        if self.get_logger().get_effective_level() <= 10:  # DEBUG=10
-            self.get_logger().debug(f"sensor query({sensor_type}, ts={target_timestamp:.4f}): found={found}, min diff={min_diff:.4f}s, ahead_behind={'ahead' if is_ahead else 'behind'} frame, iterations={search_iterations}/{buffer_size}, sensor entries={sensor_entries}, duration={func_duration:.6f}s (iteration time={iterate_time:.6f}s)")
-
-        if not found:
-             self.get_logger().debug(f"sensor query({sensor_type}): no data found near timestamp {target_timestamp:.4f}")
-             return None, None, None, None  # return None tuple, add is_ahead
-
-        # Warn if the time difference is large, but still return the found data
-        if min_diff > self.max_timestamp_diff:
-            ahead_behind = "ahead" if is_ahead else "behind"
-            self.get_logger().warn(f"sensor query({sensor_type}): large time difference ({min_diff:.4f}s > {self.max_timestamp_diff}s), target timestamp={target_timestamp:.4f}, closest:{closest_timestamp:.4f}({ahead_behind} the frame). still use this data.")
-
-        return closest_data, closest_timestamp, min_diff, is_ahead  # return the sensor data whether it is ahead of the frame timestamp
-
-    # Updated get_current_gps_data method, using buffer to find closest sensor data
-    def find_closest_gps_data(self, timestamp=None):
-        """Find the GPS data closest to the given timestamp using the sensor buffer."""
-        if timestamp is None:
-            timestamp = time.time() # Default to now if no timestamp provided
-        with self.sensor_buffer_lock:
-            return self._find_closest_data(self.sensor_buffer, timestamp, 'gps')
+        # Store timestamped reading
+        ros_time_sec = self.get_clock().now().nanoseconds / 1e9
+        self.heading_readings.append((ros_time_sec, msg.data))
 
     def start(self):
         start_method_time = time.time() # <<< TIMER START
@@ -451,7 +347,7 @@ class IntegratedNode(Node):
     def init_image_dimensions(self):
         init_start_time = time.time() # <<< TIMER START
         # Try multiple times to get the first frame to determine image dimensions
-        max_attempts = 5
+        max_attempts = 10
         retrieved = False
         for attempt in range(max_attempts):
             # self.get_logger().info(f"Trying to get first frame for dimension detection (attempt {attempt+1}/{max_attempts})")
@@ -490,7 +386,7 @@ class IntegratedNode(Node):
         # If we couldn't get image dimensions, use defaults
         if not retrieved:
             self.get_logger().error("Could not determine image dimensions - using default values")
-            self.image_center = (640, 360)  # Default for 1280x720
+            self.image_center = (640, 512)  # Default for 1280x720
             # self.get_logger().info("Initializing gps_manager (with defaults)...") # <<< ADDED PRINT
             gps_mgr_start = time.time() # <<< TIMER START
             self.gps_manager = gps_manager()
@@ -559,13 +455,12 @@ class IntegratedNode(Node):
 
     @FunctionProfiler()
     def process_stream(self):
-        # self.get_logger().info("process_stream thread entered.") # <<< ADDED PRINT
         # Target FPS for retrieving frames
-        streaming_fps = 5 # Set to retrieve frames at a rate of 1 frame per second
-        frame_time = 1.0 / streaming_fps
+        stream_rate = 5 # set to retrieve 5 frames per second
+        frame_time = 1.0 / stream_rate
 
         # Use rclpy.Rate for rate control
-        rate = self.create_rate(streaming_fps, self.get_clock())
+        rate = self.create_rate(stream_rate, self.get_clock())
 
         # record performance data
         frame_count = 0
@@ -573,448 +468,250 @@ class IntegratedNode(Node):
         max_loop_time = 0
         
         while rclpy.ok():
-            loop_start_time = time.time() # <<< TIMER START
+            loop_start_time = time.time()
 
-            # Get the latest image frame and timestamp from the streaming module
-            result = None # Initialize result to None
+            # Get the latest image frame from the streaming module
             try:
-                # <<< ADDED LOG >>>
-                # self.get_logger().info("process_stream: Attempting retrieve_image...")
-                # retrieve_start_time = time.time() # <<< TIMER START
                 result = self.streaming_module.retrieve_image()
-                # retrieve_duration = time.time() - retrieve_start_time # <<< TIMER END
-                # self.get_logger().info(f"process_stream: retrieve_image took {retrieve_duration:.6f} seconds.")
-                # <<< ADDED LOG >>>
-                self.get_logger().info(f"Retrieve Image Timestamp: {result[1]:.6f}")
+                
                 if result is not None:
-                    # self.get_logger().info("process_stream: retrieve_image returned successfully.")
-                    pass
-                else:
-                    # self.get_logger().warn("process_stream: retrieve_image returned None.") # Changed to WARN
-                    pass
+                    frame, frame_timestamp = result # frame_timestamp is from streaming_module
+                    
+                    if frame is not None:
+                        # self.get_logger().info(f"Retrieve Image Timestamp: {frame_timestamp:.6f}")
+
+                        # Find closest sensor readings
+                        closest_gps_reading = self._get_closest_reading(self.gps_readings, frame_timestamp)
+                        closest_height_reading = self._get_closest_reading(self.height_readings, frame_timestamp)
+                        closest_heading_reading = self._get_closest_reading(self.heading_readings, frame_timestamp)
+                        closest_gimbal_attitude_reading = self._get_closest_reading(self.gimbal_attitude_readings, frame_timestamp)
+
+                        # Store combined info and update latest_frame for compatibility
+                        with self.frame_lock:
+                            self.latest_frame = frame.copy()
+                            self.latest_frame_timestamp = frame_timestamp
+                            
+                            self.latest_processed_frame_info = {
+                                'frame': frame.copy(),
+                                'frame_timestamp': frame_timestamp,
+                                'gps_reading': closest_gps_reading,
+                                'height_reading': closest_height_reading,
+                                'heading_reading': closest_heading_reading,
+                                'gimbal_attitude_reading': closest_gimbal_attitude_reading,
+                            }
+                            
+                        # Publish the frame to ROS topics
+                        try:
+                            # publish the original image
+                            img_msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
+                            img_msg.header.stamp = self.get_clock().now().to_msg()
+                            self.image_pub.publish(img_msg)
+                            
+                            # publish compressed image
+                            compressed_img = CompressedImage()
+                            compressed_img.header.stamp = self.get_clock().now().to_msg()
+                            compressed_img.format = "jpeg"
+                            compressed_img.data = np.array(cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])[1]).tobytes()
+                            self.compressed_image_pub.publish(compressed_img)
+                        except Exception as e:
+                            self.get_logger().error(f"Error publishing image: {str(e)}")
             except Exception as e:
-                # <<< ADDED EXCEPTION LOGGING >>>
                 self.get_logger().error(f"Exception during retrieve_image: {type(e).__name__} - {e}", exc_info=True)
-                # Optionally add a small sleep here if retrieve_image fails rapidly
                 time.sleep(1.0)
-                rate.sleep() # Still sleep according to rate even if there's an error
-                continue # Skip the rest of the loop iteration on error
-
-            if result is not None:
-                frame, timestamp = result
-                # <<< START ADDED LOGGING >>>
-                if frame is None:
-                    # self.get_logger().warn("process_stream: Frame extracted from result is None!")
-                    pass
-                else:
-                    # self.get_logger().info(f"process_stream: Frame extracted successfully, shape={frame.shape}, ts={timestamp:.4f}")
-                # <<< END ADDED LOGGING >>>
-                    pass
-
-                if frame is not None:
-                    # publish the frame to the compressed image topic for debugging
-                    publish_start_time = time.time() # <<< TIMER START
-                    try:
-                        # convert the image to compressed format
-                        compressed_img = CompressedImage()
-                        compressed_img.header.stamp = self.get_clock().now().to_msg()
-                        compressed_img.format = "jpeg"
-                        compress_start_time = time.time() # <<< TIMER START
-                        compressed_img.data = np.array(cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])[1]).tobytes()
-                        compress_duration = time.time() - compress_start_time # <<< TIMER END
-                        self.get_logger().debug(f"process_stream: JPEG compression took {compress_duration:.8f} seconds.") 
-                        # normally 0.001s
-                        # publish the compressed image
-                        self.compressed_image_pub.publish(compressed_img)
-                        publish_duration = time.time() - publish_start_time # <<< TIMER END
-                        # self.get_logger().info(f"Published frame to compressed image topic for debugging")
-                        # self.get_logger().info(f"process_stream: Publishing compressed image took {publish_duration:.6f} seconds (incl. compression).")
-                    except Exception as e:
-                        self.get_logger().error(f"Error publishing compressed image: {str(e)}")
-
-                    # add the new frame to the buffer
-                    buffer_add_start_time = time.time() # <<< TIMER START
-                    with self.frame_buffer_lock:
-                        self.frame_buffer.append({
-                            'frame': frame.copy(),
-                            'timestamp': timestamp,
-                            'processed': False  # mark this frame as not processed
-                        })
-                    # buffer_add_duration = time.time() - buffer_add_start_time # <<< TIMER END
-                    # self.get_logger().debug(f"process_stream: Adding frame to buffer took {buffer_add_duration:.8f} seconds.")
-
-                    current_time = time.time()
-                    # cutoff_time = current_time - self.frame_buffer_duration
-
-                    # find the closest GPS, height and heading data
-                    # gps_data, gps_ts, gps_diff, _ = self._find_closest_data(self.sensor_buffer, timestamp, 'gps')
-                    # height_data, height_ts, height_diff, _ = self._find_closest_data(self.sensor_buffer, timestamp, 'height')
-                    # heading_data, heading_ts, heading_diff, _ = self._find_closest_data(self.sensor_buffer, timestamp, 'heading')
-
-                    # only consider this frame when all data is available
-                    # if gps_data is None or height_data is None or heading_data is None:
-                    #     continue
-
-                    #
-                    # total_diff = gps_diff + height_diff + heading_diff
-
-                    #
-                    # if total_diff < min_total_diff:
-                    #     min_total_diff = total_diff
-                    #     best_frame_info = {
-                    #         'frame': frame.copy(),
-                    #         'gps_data': gps_data,
-                    #         'height_data': height_data,
-                    #         'heading_data': heading_data,
-                    #         'exact_timestamp': timestamp,
-                    #         'total_time_diff': total_diff
-                    #     }
-                    #     # 标记帧为已处理
-                    #     frame_info['processed'] = True
-
-                    # # 继续发布当前帧用于显示
-                    # # ... existing compressed image publishing code ...
-
-            # <<< ADDED ELSE for result is None >>>
-            else:
-                 self.get_logger().warn("process_stream: retrieve_image returned None, skipping frame processing.")
-
-            # loop_duration = time.time() - loop_start_time # <<< TIMER END
-            # self.get_logger().info(f"process_stream: Full loop iteration took {loop_duration:.6f} seconds.")
-            
+                
             # update performance metrics
             loop_duration = time.time() - loop_start_time
             frame_count += 1
             total_loop_time += loop_duration
             max_loop_time = max(max_loop_time, loop_duration)
             
-            if frame_count % 100 == 0:
-                self.get_logger().info(f"stream processing performance: average loop time={total_loop_time/frame_count:.6f} seconds, max loop time={max_loop_time:.6f} seconds, processed frames={frame_count}")
-            
             rate.sleep()
 
     @FunctionProfiler()
     def process_detection(self):
-        # self.get_logger().info("process_detection thread entered.") # <<< ADDED PRINT
-        try: # Add try block for better error reporting if something fails early
+        try:
             # Target detection rate (per second)
-            detection_rate = 7.0  # Adjust as needed
-            detection_time = 1.0 / detection_rate
-
-            # Initialize detection_array to None
-            detection_array = None
-
-            # Use rclpy.Rate for rate control
-            # self.get_logger().info("process_detection: Creating rate...") # <<< ADDED PRINT
+            detection_rate = 7
             rate = self.create_rate(detection_rate, self.get_clock())
-            # self.get_logger().info("process_detection: Rate created.") # <<< ADDED PRINT
 
             while rclpy.ok():
-                loop_start_time = time.time() # <<< TIMER START
-                # Modify to find best frame first
-                find_best_start_time = time.time() # <<< TIMER START
-                # self.get_logger().info(f"finding best frame...")
-                # best_match = self._find_best_frame_for_sensor_data()
-                find_best_duration = time.time() - find_best_start_time # <<< TIMER END
-                # self.get_logger().info(f"find best frame took {find_best_duration:.6f} seconds, result: {'success' if best_match else 'not found'}")
-                # best_match = True
-                # If best match is found, process it
+                loop_start_time = time.time()
+                frame_for_detection = None
+                
+                current_frame_info = None
+                with self.frame_lock:
+                    if self.latest_processed_frame_info:
+                        # Perform a shallow copy of the dictionary. The frame itself is copied when stored.
+                        current_frame_info = self.latest_processed_frame_info.copy()
+                        self.latest_processed_frame_info = None # Mark as consumed
+                    # No else needed, current_frame_info remains None if the if condition is false
+                
+                if current_frame_info is None:
+                    self.get_logger().debug("No new frame available for detection, waiting...")
+                    rate.sleep()
+                    continue
 
-                # <<< TEMP DEBUG: Get latest frame directly >>>
-                best_match = None
-                with self.frame_buffer_lock:
-                    if self.frame_buffer:
-                        latest_frame_info = self.frame_buffer[-1] # Get the last item
-                        # create a matching structure containing the latest sensor data
-                        best_match = {
-                            'frame': latest_frame_info['frame'].copy(),
-                            'gps_data': self.current_gps, # use the latest GPS data
-                            'height_data': self.current_height, # use the latest height data
-                            'heading_data': self.current_heading, # use the latest heading data
-                            'exact_timestamp': latest_frame_info['timestamp'],
-                            'total_time_diff': 0.0 # placeholder value
-                        }
-                        detection_frame_timestamp = time.time()
-                        self.get_logger().info(f"Detection Frame Time Diff: {detection_frame_timestamp-latest_frame_info['timestamp']:.6f}")
-                        # check the difference between the sensor data and the frame timestamp
-                        frame_timestamp = latest_frame_info['timestamp']
-                        if hasattr(self, 'latest_gps_timestamp') and self.latest_gps_timestamp:
-                            gps_diff = abs(self.latest_gps_timestamp - frame_timestamp)
-                            if gps_diff > 0.1:
-                                self.get_logger().info(f"GPS data timestamp difference: {gps_diff:.3f} seconds")
+                frame_for_detection = current_frame_info['frame']
+                frame_timestamp = current_frame_info['frame_timestamp']
+                gps_reading = current_frame_info['gps_reading']
+                height_reading = current_frame_info['height_reading']
+                heading_reading = current_frame_info['heading_reading']
+                gimbal_attitude_reading = current_frame_info['gimbal_attitude_reading']
+                
+                # Check if all necessary data is present
+                if not all([frame_for_detection is not None, gps_reading, height_reading, heading_reading, gimbal_attitude_reading]):
+                    missing_data = []
+                    if frame_for_detection is None: missing_data.append("frame")
+                    if not gps_reading: missing_data.append("GPS reading")
+                    if not height_reading: missing_data.append("height reading")
+                    if not heading_reading: missing_data.append("heading reading")
+                    if not gimbal_attitude_reading: missing_data.append("gimbal attitude reading")
+                    # self.get_logger().warn(f"Missing data for detection: {', '.join(missing_data)} from latest_processed_frame_info.")
+                    rate.sleep()
+                    continue
+
+                # Extract actual data values and their timestamps
+                gps_ts, current_gps_val = gps_reading
+                height_ts, current_height_val = height_reading
+                heading_ts, current_heading_val = heading_reading # This is in degrees
+                gimbal_ts, current_gimbal_attitude_val = gimbal_attitude_reading # This is Vector3 msg (radians)
+
+                # Synchronization check
+                time_diff_gps = abs(frame_timestamp - gps_ts)
+                time_diff_height = abs(frame_timestamp - height_ts)
+                time_diff_heading = abs(frame_timestamp - heading_ts)
+                time_diff_gimbal = abs(frame_timestamp - gimbal_ts)
+
+                max_diff = self.max_sync_time_diff
+                if (time_diff_gps > max_diff or
+                    time_diff_height > max_diff or
+                    time_diff_heading > max_diff or
+                    time_diff_gimbal > max_diff):
+                    self.get_logger().warn(
+                        f"Data stale for detection. Frame_ts: {frame_timestamp:.3f}, "
+                        f"GPS_ts: {gps_ts:.3f} (diff: {time_diff_gps:.3f}), "
+                        f"Height_ts: {height_ts:.3f} (diff: {time_diff_height:.3f}), "
+                        f"Heading_ts: {heading_ts:.3f} (diff: {time_diff_heading:.3f}), "
+                        f"Gimbal_ts: {gimbal_ts:.3f} (diff: {time_diff_gimbal:.3f}). "
+                        f"Max allowed: {max_diff:.3f}s."
+                    )
+                    rate.sleep()
+                    continue
+                
+                self.get_logger().debug(
+                    f"Data synchronized. Frame_ts: {frame_timestamp:.3f}, "
+                    f"GPS_diff: {time_diff_gps:.3f}, Height_diff: {time_diff_height:.3f}, "
+                    f"Heading_diff: {time_diff_heading:.3f}, Gimbal_diff: {time_diff_gimbal:.3f}."
+                )
                         
-                        if hasattr(self, 'latest_height_timestamp') and self.latest_height_timestamp:
-                            height_diff = abs(self.latest_height_timestamp - frame_timestamp)
-                            if height_diff > 0.1:
-                                self.get_logger().info(f"height data timestamp difference: {height_diff:.3f} seconds")
-                        
-                        if hasattr(self, 'latest_heading_timestamp') and self.latest_heading_timestamp:
-                            heading_diff = abs(self.latest_heading_timestamp - frame_timestamp)
-                            if heading_diff > 0.1:
-                                self.get_logger().info(f"heading data timestamp difference: {heading_diff:.3f} seconds")
-                        # self.get_logger().info(f"Processing best match frame, total time difference: {best_match['total_time_diff']:.6f} seconds")
-                    else:
-                        self.get_logger().debug("TEMP DEBUG: Frame buffer empty, cannot get latest frame.")
-                # <<< END TEMP DEBUG >>>
-
-                if best_match:
-                    # Log the match quality
-                    # self.get_logger().info(f"Processing best match frame, total time difference: {best_match['total_time_diff']:.6f} seconds")
-
-                    # Process detection using existing code, but directly use best_match instead of re-retrieving
-                    frame_for_detection = best_match['frame']
-                    captured_data = best_match
-
-                    # Proceed only if we have a valid frame
-                    if frame_for_detection is not None and captured_data is not None:
-                        # Explicitly apply preprocessing to reduce overexposure before detection
-                        preprocess_start_time = time.time() # <<< TIMER START
-                        processed_frame = frame_for_detection#self.detection_model.preprocess_image(frame_for_detection)
-
-                        # Resize frame to width 640, maintaining aspect ratio
-
-                        original_height, original_width = processed_frame.shape[:2]
-                        target_width = 640
-                        target_height = 512
-                        dim = (target_width, target_height)
-
-                        # Log before resizing (changed message slightly for clarity)
-                        # self.get_logger().info(f"process_detection: Preparing to resize frame from {original_width}x{original_height} to {target_width}x{target_height}") # <<< REVISED PRINT
-                        # processed_frame = cv2.resize(processed_frame, dim, interpolation = cv2.INTER_AREA) # <<< SUSPECTED HANG POINT
-                        # Log immediately after resizing
-                        # self.get_logger().info("process_detection: Frame resize complete.") # <<< ADDED PRINT
-                        # self.get_logger().debug(f"Resized frame dimensions: {processed_frame.shape}") # <<< ADDED PRINT
-                        # preprocess_duration = time.time() - preprocess_start_time # <<< TIMER END
-                        # self.get_logger().info(f"process_detection: Preprocessing (resize) took {preprocess_duration:.6f} seconds.")
-
-
-                        # Run YOLO detection - Assume it returns (detections, poses)
-                        # detection_array, pose_array = self.detection_model.yolo_detect(processed_frame)
-                        # self.get_logger().info("process_detection: Calling yolo_detect...") # <<< ADDED PRINT
-                        # yolo_start_time = time.time() # <<< TIMER START
-                        yolo_result = self.detection_model.yolo_detect(processed_frame)
-                        # yolo_duration = time.time() - yolo_start_time # <<< TIMER END
-                        # self.get_logger().info(f"process_detection: yolo_detect took {yolo_duration:.6f} seconds.")
-                        # self.get_logger().info("process_detection: yolo_detect returned.") # <<< ADDED PRINT
-
-                        # Unpack carefully, handling potential None or non-tuple results
-                        detection_array = None
-                        # pose_array = None # Keep pose_array for potential future use
-                        if isinstance(yolo_result, tuple) and len(yolo_result) >= 1:
-                            detection_array = yolo_result[0]
-                            if len(yolo_result) > 1:
-                                pose_array = yolo_result[1]
-                        elif isinstance(yolo_result, Detection2DArray): # Handle case where it only returns detections
-                            detection_array = yolo_result
-                        else:
-                            self.get_logger().warn(f"Unexpected return type from yolo_detect: {type(yolo_result)}")
-
-                        # Process detection results and determine if bounding box center is in target area
-                        if detection_array is not None:
-                            # Get GPS data corresponding to the frame
-                            gps_info = best_match['gps_data']
-                            height_data = best_match['height_data']
-                            heading_data = best_match['heading_data']
-                            # timestamp = best_match['exact_timestamp']
-                            # <<< START ADDED LOGGING >>>
-                            # self.get_logger().info(f"process_detection: 1")
-                            # self.get_logger().info(f"process_detection: Extracted data for frame ts={timestamp:.4f}: gps={gps_info}, height={height_data}, heading={heading_data}")
-                            # <<< END ADDED LOGGING >>>
-
-                            # Check if required data is available for GPS estimation
-                            if gps_info is not None and height_data is not None and heading_data is not None:
-                                current_lat, current_lon = gps_info
-                                current_alt = height_data
-                                # Convert heading from degrees to radians
-                                current_heading_rad = math.radians(heading_data)
-                                # self.get_logger().info(f"process_detection: 2")
-                                # Set the current state in gps_manager
-                                try:
-                                    self.gps_manager.set_current_state(
-                                        gps=(current_lat, current_lon),
-                                        height=current_alt,
-                                        heading=current_heading_rad
-                                    )
-                                    state_set = True
-                                except Exception as e:
-                                    self.get_logger().error(f"Error setting gps_manager state: {e}")
-                                    state_set = False
-
-                                # Check if center point is within specified region (480-800, 270-450)
-                                # window at 10m height
-                                # Width 4.0m, height 3.93m
-                                # 640 by 512
-                                # 230-410, 260-460
-                                # if 230 <= center_x <= 410 and 260 <= center_y <= 460:
-                                #     # Create GPS message
-                                #     gps_msg = NavSatFix()
-                                #     gps_msg.header.stamp = self.get_clock().now().to_msg()
-                                #     gps_msg.header.frame_id = "casulty"
-                                #     # Ensure latitude and longitude are float type
-                                #     gps_msg.latitude = float(gps_data[0])  # latitude
-                                #     gps_msg.longitude = float(gps_data[1])  # longitude
-                                #     gps_msg.altitude = 0.0  # assume target is on ground
-
-                                #     # Publish GPS message
-                                #     self.gps_target_pub.publish(gps_msg)
-                                #     self.get_logger().info(f"Target in Center of Image: Publishing GPS at {gps_data[0]:.8f}, {gps_data[1]:.8f}")
-
-                                #     #add to gps manager
-                                #     self.gps_manager.add_target(float(gps_data[0]), float(gps_data[1]))
-
-                                #     # for precise search
-                                #     # 100 x 100 pixels
-                                #     # width 2.11m, height 2.10m
-                                #     # if 220 <= center_x <= 420 and 206 <= center_y <= 306:
-                                #     #     self.precise_gps_target_pub.publish(gps_msg)
-                                #     #     self.get_logger().info(f"PRECISE TARGET FOUND AT {gps_data[0]:.8f}, {gps_data[1]:.8f}")
-                                if state_set:
-                                    # Iterate through all detection results
-                                    estimation_total_duration = 0.0 # <<< TIMER INIT
-                                    estimation_count = 0 # <<< COUNTER INIT
-                                    for detection in detection_array.detections:
-                                        # Get bounding box center coordinates and size
-
-                                        center_x = detection.bbox.center.position.x
-                                        center_y = detection.bbox.center.position.y
-                                        width = detection.bbox.size_x
-                                        height = detection.bbox.size_y
-
-                                        # Calculate bbox (x1, y1, x2, y2)
-                                        x1 = center_x - width / 2
-                                        y1 = center_y - height / 2
-                                        x2 = center_x + width / 2
-                                        y2 = center_y + height / 2
-                                        bbox = (x1, y1, x2, y2)
-                                        # 230-410, 260-460
-
-                                        if 10 <= center_x <= 630 and 15 <= center_y <= 500:
-                                            try:
-                                                # Estimate GPS from bounding box
-                                                # self.get_logger().info(f"process_detection: GPS estimation start")
-                                                # Store the result in a single variable first
-                                                estimation_start_time = time.time() # <<< TIMER START
-                                                estimated_coords = self.gps_manager.estimate_gps_from_bbox(bbox)
-                                                estimation_duration = time.time() - estimation_start_time # <<< TIMER END
-                                                estimation_total_duration += estimation_duration # <<< TIMER ACCUMULATE
-                                                estimation_count += 1 # <<< COUNTER INCREMENT
-
-                                                if estimated_coords is not None:
-                                                    # Unpack only if the result is not None
-                                                    estimated_lat, estimated_lon = estimated_coords
-
-                                                    # --- Calculate and log distance ---
-                                                    distance_meters = calculate_haversine_distance(
-                                                        current_lat, current_lon,
-                                                        estimated_lat, estimated_lon
-                                                    )
-                                                    # --- End of distance calculation ---
-
-                                                    # Create GPS message for the estimated target location
-                                                    gps_msg = NavSatFix()
-                                                    timestamp = self.get_clock().now().to_msg()
-                                                    gps_msg.header.stamp = timestamp
-                                                    # Use a distinct frame_id for estimated targets
-                                                    gps_msg.header.frame_id = "estimated_casualty"
-                                                    gps_msg.latitude = float(estimated_lat)
-                                                    gps_msg.longitude = float(estimated_lon)
-                                                    # Set altitude if available, otherwise 0.0 or drone's altitude
-                                                    gps_msg.altitude = distance_meters # Storing distance here, as per your code
-
-                                                    # Publish estimated GPS message
-                                                    self.gps_target_pub.publish(gps_msg)
-
-                                                    # Add the *estimated* target GPS to the manager for clustering
-                                                    self.gps_manager.add_target(float(estimated_lat), float(estimated_lon))
-                                                    self.get_logger().info(f"Estimated Target GPS: Lat={estimated_lat:.8f}, Lon={estimated_lon:.8f}, Timestamp={(timestamp.sec + timestamp.nanosec * 1e-9):.6f}")
-                                                    self.get_logger().info(f"Distance from drone to estimated target: {distance_meters:.2f} meters")
-
-                                                    # Optional: Refine logic for precise target publishing
-                                                    if distance_meters < 1.5:
-                                                        self.precise_gps_target_pub.publish(gps_msg)
-                                                        self.get_logger().info(f"PRECISE TARGET FOUND AT {estimated_lat:.8f}, {estimated_lon:.8f}")
-
-                                                else:
-                                                    # Log that estimation failed for this bbox
-                                                    self.get_logger().warn(f"estimate_gps_from_bbox returned None for bbox {bbox}. Skipping GPS estimation for this detection.")
-
-                                            except ValueError as e:
-                                                # Log the specific ValueError message
-                                                self.get_logger().warn(f"Could not estimate GPS for bbox {bbox}: {e}")
-                                            except Exception as e:
-                                                # Log the exception type and message, and include traceback
-                                                tb_str = traceback.format_exc() # Format the traceback string
-                                                self.get_logger().error(f"Unexpected error during GPS estimation: {type(e).__name__} - {e}\nTraceback:\n{tb_str}")
-                                        else:
-                                            self.get_logger().info("Detection Not Close Enough")
-                                    # Log total estimation time
-                                    if estimation_count > 0:
-                                        avg_estimation_time = estimation_total_duration / estimation_count
-                                        self.get_logger().info(f"process_detection: GPS estimation for {estimation_count} detections took {estimation_total_duration:.6f} seconds (avg {avg_estimation_time:.6f}s per detection).")
-                                    else:
-                                        self.get_logger().debug("process_detection: No valid detections for GPS estimation in this cycle.")
-                        else:
-                            # Extracted data for logging missing sensor parts
-                            gps_info = best_match.get('gps_data')
-                            height_data = best_match.get('height_data')
-                            heading_data = best_match.get('heading_data')
-                            timestamp = best_match.get('exact_timestamp', 'N/A') # Get timestamp or default
-
-                            missing_data = []
-                            if gps_info is None: missing_data.append("GPS")
-                            if height_data is None: missing_data.append("Height")
-                            if heading_data is None: missing_data.append("Heading")
-                            # Log timestamp even if data is missing
-                            ts_str = f"{timestamp:.4f}" if isinstance(timestamp, float) else str(timestamp)
-                            self.get_logger().warn(f"Skipping GPS estimation due to missing sensor data: {', '.join(missing_data)} for frame timestamp {ts_str}")
-
+                # Process the frame for detection
+                processed_frame = frame_for_detection # Already a copy
+                
+                # Run YOLO detection
+                yolo_result = self.detection_model.yolo_detect(processed_frame)
+                
+                # Unpack detection results
+                detection_array = None
+                if isinstance(yolo_result, tuple) and len(yolo_result) >= 1:
+                    detection_array = yolo_result[0]
+                elif isinstance(yolo_result, Detection2DArray):
+                    detection_array = yolo_result
                 else:
-                    self.get_logger().warn("No best match found for sensor data")
+                    self.get_logger().warn(f"Unexpected return type from yolo_detect: {type(yolo_result)}")
+                
+                # Process detection results
+                if detection_array is not None:
+                    # Set current state in gps_manager
+                    try:
+                        self.gps_manager.set_current_state(
+                            gps=current_gps_val, # (lat, lon)
+                            height=current_height_val, # meters
+                            heading=math.radians(current_heading_val), # Convert degrees to radians
+                            gimbal_attitude=current_gimbal_attitude_val # Vector3 (radians)
+                        )
+                        
+                        # Process each detection
+                        for detection in detection_array.detections:
+                            center_x = detection.bbox.center.position.x
+                            center_y = detection.bbox.center.position.y
 
-                # Process and publish detection array (Moved logging inside the condition)
-                # Ensure detection_array is not None before checking its length
-                detection_publish_start_time = time.time() # <<< TIMER START
-                detections_published = 0
-                if detection_array is not None and len(detection_array.detections) > 0:
-                    self.get_logger().info(f"Detection: {len(detection_array.detections)} detection(s) found.")
-                    # update the last detection timestamp
-                    self.last_detection_time = time.time()
+                            bbox_center_input = (center_x, center_y)
+                            
+                            if 200 <= center_x <= 440 and 150 <= center_y <= 362: # TODO: This bounding box might need re-evaluation based on image size or use case
+                                try:
+                                    self.get_logger().info(f"Detection bounding box center: x={center_x:.2f}, y={center_y:.2f} (pixel coordinates)")
 
-                    # Add timestamp for synchronization
-                    frame_time_msg = self.get_clock().now().to_msg()
-                    detection_array.header.stamp = frame_time_msg
-                    self.detection_pub.publish(detection_array)
-                    detections_published = len(detection_array.detections)
+                                    # Estimate GPS from bounding box
+                                    # Assuming calculate_lateral_distance uses the state set by set_current_state
+                                    # If it requires explicit arguments, ensure they are correctly formatted (e.g., degrees)
+                                    # The original code passed: gimbal_attitude_deg=self.current_gimbal_attitude (Vector3), drone_height_m=self.current_height, drone_heading_deg=self.current_heading
+                                    # For consistency, if calculate_lateral_distance needs these, use synchronized values:
+                                    gimbal_attitude_for_calc_deg_tuple = (
+                                        current_gimbal_attitude_val.x, # roll
+                                        current_gimbal_attitude_val.y, # pitch
+                                        current_gimbal_attitude_val.z  # yaw
+                                    )
+                                    result = self.gps_manager.calculate_lateral_distance(
+                                        bbox_center=bbox_center_input,
+                                        gimbal_attitude_deg=gimbal_attitude_for_calc_deg_tuple, # Pass as tuple of degrees
+                                        drone_height_m=current_height_val,
+                                        drone_heading_deg=current_heading_val # Already in degrees
+                                        )
+                                    estimated_lat = result['estimated_latitude']
+                                    estimated_lon = result['estimated_longitude']
+                                    distance_meters = result['lateral_distance_m']
 
-                    # extract the center coordinates of the first detection and publish
-                    if len(detection_array.detections) > 0:
-                        detection = detection_array.detections[0]
-                        center = Vector3()
-                        center.x = detection.bbox.center.position.x
-                        center.y = detection.bbox.center.position.y
-                        center.z = 0.0  # optional: use z to store confidence
-
-                        # Publish detection center only if gimbal mode is LOCK_ON
-                        if self.current_gimbal_mode == 'LOCK_ON':
-                            self.detection_center_pub.publish(center)
-                            self.get_logger().info(f"Published detection center (LOCK_ON): x={center.x:.2f}, y={center.y:.2f}")
-                        else:
-                             self.get_logger().debug(f"Gimbal mode is not LOCK_ON ({self.current_gimbal_mode}), skipping detection center publish.")
-
-                detection_publish_duration = time.time() - detection_publish_start_time # <<< TIMER END
-                if detections_published > 0:
-                    self.get_logger().debug(f"process_detection: Publishing {detections_published} detections took {detection_publish_duration:.6f} seconds.")
-                # Wait for next detection cycle
-                # elapsed = time.time() - start_time # No longer needed for sleep calculation
-                # sleep_time = max(0, detection_time - elapsed) # No longer needed
-                # self.get_logger().info("process_detection: Loop end, calling rate.sleep().") # <<< ADDED PRINT
-                loop_duration = time.time() - loop_start_time # <<< TIMER END
-                # self.get_logger().info(f" Full Detection loop iteration took {loop_duration:.6f} seconds.")
+                                    
+                                    # Create and publish GPS message
+                                    gps_msg = NavSatFix()
+                                    timestamp = self.get_clock().now().to_msg()
+                                    gps_msg.header.stamp = timestamp
+                                    gps_msg.header.frame_id = "estimated_casualty"
+                                    gps_msg.latitude = float(estimated_lat)
+                                    gps_msg.longitude = float(estimated_lon)
+                                    gps_msg.altitude = distance_meters
+                                    
+                                    self.gps_target_pub.publish(gps_msg)
+                                    self.gps_manager.add_target(float(estimated_lat), float(estimated_lon))
+                                    
+                                    self.get_logger().info(f"Estimated Target GPS: Lat={estimated_lat:.8f}, Lon={estimated_lon:.8f}")
+                                    self.get_logger().info(f"Distance from drone to estimated target: {distance_meters:.2f} meters")
+                                    
+                                    if distance_meters < 1.0:
+                                        self.precise_gps_target_pub.publish(gps_msg)
+                                        self.get_logger().info(f"PRECISE TARGET FOUND AT {estimated_lat:.8f}, {estimated_lon:.8f}")
+                                except Exception as e:
+                                    tb_str = traceback.format_exc()
+                                    self.get_logger().error(f"Error in GPS estimation: {e}\n{tb_str}")
+                        
+                        # Publish detection array
+                        if len(detection_array.detections) > 0:
+                            self.get_logger().info(f"Detection: {len(detection_array.detections)} detection(s) found.")
+                            frame_time_msg = self.get_clock().now().to_msg()
+                            detection_array.header.stamp = frame_time_msg
+                            self.detection_pub.publish(detection_array)
+                            
+                            # Publish detection center if in LOCK_ON mode
+                            if len(detection_array.detections) > 0 and self.current_gimbal_mode == 'LOCK_ON':
+                                detection = detection_array.detections[0]
+                                center = Vector3()
+                                center.x = detection.bbox.center.position.x
+                                center.y = detection.bbox.center.position.y
+                                center.z = 0.0
+                                self.detection_center_pub.publish(center)
+                                self.get_logger().info(f"Published detection center: x={center.x:.2f}, y={center.y:.2f}")
+                    except Exception as e:
+                        tb_str = traceback.format_exc()
+                        self.get_logger().error(f"Error processing detection: {e}\n{tb_str}")
+                else:
+                    # This else block for the outer if (frame_for_detection and sensor data check) is now handled earlier.
+                    # We can log if yolo_result was None or detection_array was None after yolo_detect call if needed.
+                    if yolo_result is None or detection_array is None :
+                         self.get_logger().debug("No detections from yolo_detect or result was None.")
+                
+                loop_duration = time.time() - loop_start_time
                 rate.sleep()
-                # self.get_logger().info("process_detection: rate.sleep() returned.") # <<< ADDED PRINT
-
         except Exception as e:
-            # Log any exception that occurs within the thread, including traceback
             tb_str = traceback.format_exc()
             self.get_logger().error(f"Exception in process_detection thread: {e}\nTraceback:\n{tb_str}")
 
@@ -1115,117 +812,21 @@ class IntegratedNode(Node):
         callback_duration = time.time() - callback_start_time # <<< TIMER END
         # self.get_logger().debug(f"gimbal_mode_callback: Total processing time: {callback_duration:.6f}s")
 
-    #   
-    def _find_best_frame_for_sensor_data(self):
-        func_start_time = time.time() # <<< TIMER START
-        best_frame_info = None
-        min_total_diff = float('inf')
-        frames_checked = 0 # <<< COUNTER
-        
-        # time statistics for each step
-        lock_time = 0
-        sensor_search_time = 0
-        frame_copy_time = 0
-        sensor_searches = 0
+    @FunctionProfiler()
+    def gimbal_attitude_callback(self, msg):
+        """Callback function to update the current gimbal attitude."""
+        callback_start_time = time.time()
+        # Update the current gimbal attitude
+        self.current_gimbal_attitude = msg
+        callback_duration = time.time() - callback_start_time
+        self.get_logger().debug(f"gimbal_attitude_callback: Total processing time: {callback_duration:.6f}s")
 
-        with self.frame_buffer_lock, self.sensor_buffer_lock:
-            lock_start = time.time()
-            # create a buffer copy to avoid being modified during processing
-            frame_buffer_copy = list(self.frame_buffer)
-            sensor_buffer_copy = list(self.sensor_buffer)
-            lock_time = time.time() - lock_start
-
-            # <<< ADDED LOGGING >>>
-            self.get_logger().info(f"frame matching: frame buffer={len(frame_buffer_copy)} frames, sensor buffer={len(sensor_buffer_copy)} entries, lock time={lock_time:.6f}s")
-            # <<< END ADDED LOGGING >>>
-
-            # if the buffer is empty, return None
-            if not frame_buffer_copy or not sensor_buffer_copy:
-                func_duration = time.time() - func_start_time # <<< TIMER END
-                self.get_logger().info(f"frame matching: buffer is empty, return None. duration={func_duration:.6f}s")
-                return None
-
-            # iterate through each frame, find the best match
-            for frame_info in frame_buffer_copy:
-                frames_checked += 1 # <<< COUNTER
-                if frame_info['processed']:
-                    continue  # skip the processed frame
-
-                frame_timestamp = frame_info['timestamp']
-                
-                # record the time for finding the sensor data
-                search_start = time.time()
-                # find the closest GPS, height and heading data
-                gps_data, gps_ts, gps_diff, _ = self._find_closest_data(sensor_buffer_copy, frame_timestamp, 'gps')
-                height_data, height_ts, height_diff, _ = self._find_closest_data(sensor_buffer_copy, frame_timestamp, 'height')
-                heading_data, heading_ts, heading_diff, _ = self._find_closest_data(sensor_buffer_copy, frame_timestamp, 'heading')
-                search_time = time.time() - search_start
-                sensor_search_time += search_time
-                sensor_searches += 3
-
-                # only consider this frame when all data is available
-                if gps_data is None or height_data is None or heading_data is None:
-                    # <<< ADDED LOGGING >>>
-                    missing = []
-                    if gps_data is None: missing.append('gps')
-                    if height_data is None: missing.append('height')
-                    if heading_data is None: missing.append('heading')
-                    self.get_logger().debug(f"frame matching: frame {frame_timestamp:.4f} skipped: missing sensor data [{', '.join(missing)}]")
-                    # <<< END ADDED LOGGING >>>
-                    continue
-
-                # calculate the total time difference as a match quality metric
-                total_diff = gps_diff + height_diff + heading_diff
-
-                # <<< ADDED LOGGING >>>
-                self.get_logger().debug(f"frame matching: frame {frame_timestamp:.4f} found all sensors, total time difference={total_diff:.4f}s (GPS:{gps_diff:.4f}s, height:{height_diff:.4f}s, heading:{heading_diff:.4f}s)")
-                # <<< END ADDED LOGGING >>>
-
-                # <<< ADDED CHECK >>>
-                # Check if the total time difference exceeds the acceptable threshold
-                if total_diff > self.max_sync_time_diff:
-                    self.get_logger().debug(f"frame matching: frame {frame_timestamp:.4f} skipped: total sensor time difference {total_diff:.4f}s > threshold {self.max_sync_time_diff:.4f}s")
-                    continue # Skip this frame, its sensor data is too far off
-                # <<< END ADDED CHECK >>>
-
-                # if this is the best match so far, save it
-                if total_diff < min_total_diff:
-                    min_total_diff = total_diff
-                    copy_start = time.time()
-                    best_frame_info = {
-                        'frame': frame_info['frame'].copy(),
-                        'gps_data': gps_data,
-                        'height_data': height_data,
-                        'heading_data': heading_data,
-                        'exact_timestamp': frame_timestamp,
-                        'total_time_diff': total_diff
-                    }
-                    frame_copy_time += time.time() - copy_start
-                    
-                    # mark the frame as processed
-                    frame_info['processed'] = True
-
-        # if a match is found, update the latest processed frame information
-        update_start = time.time()
-        update_time = 0
-        if best_frame_info:
-            with self.frame_lock:
-                self.latest_processed_frame_info = best_frame_info
-            update_time = time.time() - update_start
-        # <<< ADDED LOGGING >>>
-        else:
-            update_time = time.time() - update_start
-            self.get_logger().warn("frame matching: no best match found in this cycle.") # Changed log level and wording
-        # <<< END ADDED LOGGING >>>
-
-        func_duration = time.time() - func_start_time # <<< TIMER END
-        found_str = "found" if best_frame_info else "not found"
-        self.get_logger().info(f"frame matching: {found_str} best frame. checked frames:{frames_checked}, sensor searches:{sensor_searches} times, duration={func_duration:.6f}s (lock get:{lock_time:.6f}s, sensor search:{sensor_search_time:.6f}s, frame copy:{frame_copy_time:.6f}s, update latest frame:{update_time:.6f}s)")
-
-        return best_frame_info
+        # Store timestamped reading
+        ros_time_sec = self.get_clock().now().nanoseconds / 1e9
+        self.gimbal_attitude_readings.append((ros_time_sec, msg))
 
     def destroy_node(self):
-        # stop performance profiling and generate final report
+        # stop profiling
         if hasattr(self, 'profiling_enabled') and self.profiling_enabled:
             self.get_logger().info("Stopping performance profiling and generating final report")
             self.profile_manager.stop_profiling()
@@ -1233,6 +834,15 @@ class IntegratedNode(Node):
             self.get_logger().info(f"Final profiling report saved to: {final_report_path}")
         
         super().destroy_node()
+
+    # Helper function to find the closest reading from a deque
+    def _get_closest_reading(self, readings_deque, target_timestamp):
+        if not readings_deque:
+            return None
+        # Find the reading with the minimum absolute time difference
+        # readings_deque contains tuples of (timestamp, data)
+        closest_reading = min(readings_deque, key=lambda reading: abs(reading[0] - target_timestamp))
+        return closest_reading # Returns (timestamp, data) or None if deque is empty
 
 def main(args=None):
     rclpy.init(args=args)
@@ -1266,127 +876,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main() 
-# #!/usr/bin/env python3
-# import rclpy
-# from rclpy.node import Node
-# from sensor_msgs.msg import CompressedImage
-# from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
-# import cv2
-# import threading
-# import time
-# import numpy as np
-# import struct
-# from .streaming import Streaming
-
-# class StreamNode(Node):
-#     def __init__(self):
-#         super().__init__('stream_node')
-        
-#         # QoS profile for image transport - use BEST_EFFORT for lower latency
-#         image_qos = QoSProfile(
-#             depth=1,
-#             reliability=QoSReliabilityPolicy.BEST_EFFORT,
-#             history=QoSHistoryPolicy.KEEP_LAST
-#         )
-        
-#         # Compressed image publisher
-#         self.compressed_image_pub = self.create_publisher(
-#             CompressedImage, '/image_raw/compressed', 
-#             qos_profile=image_qos
-#         )
-        
-#         # Initialize streaming module
-#         self.streaming_module = Streaming()
-        
-#         # Add compression quality parameter
-#         self.declare_parameter('jpeg_quality', 5)
-#         self.jpeg_quality = self.get_parameter('jpeg_quality').value
-        
-#         # Statistics tracking
-#         self.frame_count = 0
-#         self.start_time = time.time()
-#         self.last_stats_time = self.start_time
-        
-#         # Unique ID counter for images
-#         self.image_id = 0
-        
-#         # Start streaming
-#         self.start()
-        
-#     def start(self):
-#         # Start the streaming module
-#         self.streaming_module.start_pipeline()
-        
-#         # Give streaming some time to initialize
-#         time.sleep(1.0)
-        
-#         # Start the streaming thread
-#         self.stream_thread = threading.Thread(target=self.process_stream)
-#         self.stream_thread.daemon = True
-#         self.stream_thread.start()
-        
-#         self.get_logger().info("Stream node started successfully")
-        
-#     def process_stream(self):
-#         # Target FPS for streaming
-#         streaming_fps = 5
-        
-#         # Use rclpy.Rate for rate control
-#         rate = self.create_rate(streaming_fps, self.get_clock())
-        
-#         while rclpy.ok():
-#             # Get the latest image frame and timestamp
-#             result = self.streaming_module.retrieve_image()
-            
-#             if result is not None:
-#                 frame, timestamp = result
-                
-#                 if frame is not None:
-#                     # Convert to compressed image and publish
-#                     try:
-#                         # Generate a unique ID for this image
-#                         self.image_id += 1
-#                         current_image_id = self.image_id
-                        
-#                         compressed_img = CompressedImage()
-#                         # Use both ROS timestamp and our own timestamp for comparison
-#                         now = self.get_clock().now()
-#                         compressed_img.header.stamp = now.to_msg()
-#                         # Add the unique ID to the frame_id field
-#                         compressed_img.header.frame_id = f"frame_{current_image_id}"
-#                         compressed_img.format = "jpeg"
-                        
-#                         # Embed the source timestamp and image ID in the first part of the image data
-#                         # Format: [SYNC(4bytes)][timestamp(8bytes)][image_id(4bytes)][image_data]
-#                         compressed_img.data = np.array(cv2.imencode(
-#                             '.jpg', 
-#                             frame, 
-#                             [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality]
-#                         )[1]).tobytes()
-#                         # Publish the compressed image
-#                         self.compressed_image_pub.publish(compressed_img)
-                        
-#                         # Print the unique ID after publishing
-#                         self.get_logger().info(f"Published image with ID: {current_image_id}, timestamp: {timestamp:.6f}")
-                        
-                            
-#                     except Exception as e:
-#                         self.get_logger().error(f"Error publishing compressed image: {str(e)}")
-            
-#             # Sleep to maintain the desired publishing rate
-#             rate.sleep()
-
-# def main(args=None):
-#     rclpy.init(args=args)
-#     node = StreamNode()
-    
-#     try:
-#         rclpy.spin(node)
-#     except KeyboardInterrupt:
-#         pass
-#     finally:
-#         node.destroy_node()
-#         rclpy.shutdown()
-
-# if __name__ == '__main__':
-#     main()

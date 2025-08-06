@@ -28,7 +28,7 @@ class PoseEstimation:
 
     def pose_detect(self, image):
         # Process at 1280x720 resolution
-        cv_image = cv2.resize(image, (640, 512)) if image.shape[0] != 640 or image.shape[1] != 512 else image
+        cv_image = cv2.resize(image, (1280, 720)) if image.shape[0] != 720 or image.shape[1] != 1280 else image
         
         # Convert to torch tensor
         tensor = torch.from_numpy(cv_image).permute(2, 0, 1)

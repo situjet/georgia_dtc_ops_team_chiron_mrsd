@@ -285,40 +285,35 @@ class gps_manager:
         # Drone Body Frame: X-axis forward, Y-axis right, Z-axis down (NED-like local frame)
         # Camera Optical Frame: X_cam-axis right in image, Y_cam-axis down in image, Z_cam-axis forward (optical axis)
         # This specific base alignment assumes:
-        #   At gimbal (0,0,0), Camera Z (optical fwd) aligns with Drone X (forward).
-        #   At gimbal (0,0,0), Camera X (image right) aligns with Drone Y (right).
-        #   At gimbal (0,0,0), Camera Y (image down) aligns with Drone Z (down).
+        #   At gimbal (0,0,0), Camera Y (image down) aligns with Drone X (forward).
+        #   At gimbal (0,0,0), Camera Z (optical fwd) aligns with Drone Y (right).
+        #   At gimbal (0,0,0), Camera X (image right) aligns with Drone Z (down).
         # The columns of R_cam_optical_to_drone_body_at_0 are CamX, CamY, CamZ axes expressed in Drone frame coords:
-        #   Col1 (CamX_right_in_Drone): [0,1,0]^T (aligns with DroneY)
-        #   Col2 (CamY_down_in_Drone):  [0,0,1]^T (aligns with DroneZ)
-        #   Col3 (CamZ_fwd_in_Drone):   [1,0,0]^T (aligns with DroneX)
+        #   Col1 (CamX_right_in_Drone): [0,0,1]^T (aligns with DroneZ)
+        #   Col2 (CamY_down_in_Drone):  [1,0,0]^T (aligns with DroneX)
+        #   Col3 (CamZ_fwd_in_Drone):   [0,1,0]^T (aligns with DroneY)
         R_cam_optical_to_drone_body_at_0 = np.array([
-            [0, 0, 1],
-            [1, 0, 0],
-            [0, 1, 0]
+            [0, 1, 0],  # DroneX component from CamY_down
+            [0, 0, 1],  # DroneY component from CamZ_fwd
+            [1, 0, 0]   # DroneZ component from CamX_right
         ])
 
-        # Transform the normalized camera coordinates vector into the drone's body frame.
-        # This initial transformation assumes the gimbal is at its zero position (e.g., facing forward).
-        ray_in_body_at_zero = R_cam_optical_to_drone_body_at_0 @ normalized_coords
-        
-        # FIX: Decompose gimbal rotation to avoid Gimbal Lock.
-        # Instead of a single Euler rotation, we apply Yaw, Pitch, and Roll sequentially
-        # to correctly model the physical behavior of the gimbal.
-        
-        # 1. Yaw rotation around the drone's Z-axis (vertical)
-        R_yaw = Rotation.from_euler('z', gimbal_yaw_input, degrees=False).as_matrix()
-        
-        # 2. Pitch rotation around the new Y-axis (right)
-        R_pitch = Rotation.from_euler('y', gimbal_pitch_input, degrees=False).as_matrix()
-        
-        # 3. Roll rotation around the final X-axis (forward)
-        R_roll = Rotation.from_euler('x', gimbal_roll_input, degrees=False).as_matrix()
+        # Calculate gimbal rotation matrix using ZYX intrinsic Euler angle sequence
+        # Note: -gimbal_pitch_input is used because a positive input pitch typically means camera tilts upwards,
+        # while a positive rotation around the Y-axis (if Y is right) in a right-handed system would tilt Z-fwd downwards.
+        # This negation aligns intuitive pitch direction with the mathematical rotation.
+        R_gimbal_movement = Rotation.from_euler(
+            'zyx', # Intrinsic: Yaw around Z_base, then Pitch around new Y, then Roll around new X
+            [gimbal_yaw_input, -gimbal_pitch_input, gimbal_roll_input],
+            degrees=False # Input gimbal attitudes are already in radians here
+        ).as_matrix()
 
-        # Apply rotations in Yaw -> Pitch -> Roll order.
-        # This simulates the physical gimbal structure and avoids singularity issues.
-        # The full rotation is R_yaw * R_pitch * R_roll.
-        ray_direction_drone_body = R_yaw @ R_pitch @ R_roll @ ray_in_body_at_zero
+        # Combine base alignment with gimbal movement to get total rotation from Camera Optical to Drone Body frame
+        R_total = R_cam_optical_to_drone_body_at_0 @ R_gimbal_movement
+        
+        # Transform normalized camera coordinates to a ray direction in the Drone Body Frame
+        # ray_direction_drone_body is the ray vector [X_fwd, Y_right, Z_down]
+        ray_direction_drone_body = R_total @ normalized_coords
 
         # Check if the ray is pointing downwards (positive Z component in Z-down frame)
         if ray_direction_drone_body[2] < 1e-9: # Allow for minor floating point inaccuracies
@@ -339,10 +334,10 @@ class gps_manager:
         right_offset = ground_point_drone_body[1] # Offset along drone's right Y-axis
 
         # Convert drone body frame Fwd/Right offsets to ENU (East, North, Up) offsets
-        # Based on user feedback, the correct rotation for heading is counter-clockwise (CCW).
-        # h=0 is North, h=90 is West.
-        enu_x = fwd_offset * np.sin(-self.current_heading) + right_offset * np.cos(-self.current_heading) # East offset
-        enu_y = fwd_offset * np.cos(-self.current_heading) - right_offset * np.sin(-self.current_heading) # North offset
+        # self.current_heading = 0 means drone X-axis (Forward) points North.
+        # self.current_heading = pi/2 (90 deg) means drone X-axis (Forward) points East.
+        enu_x = fwd_offset * np.sin(self.current_heading) + right_offset * np.cos(self.current_heading)  # East offset
+        enu_y = fwd_offset * np.cos(self.current_heading) - right_offset * np.sin(self.current_heading)  # North offset
 
         # Lateral distance is the magnitude of the horizontal displacement
         lateral_distance_m = np.sqrt(enu_x**2 + enu_y**2)
@@ -379,5 +374,6 @@ class gps_manager:
             "enu_offsets_m": (enu_x, enu_y),
             "fwd_right_offsets_m": (fwd_offset, right_offset),
             "ray_direction_drone_body": ray_direction_drone_body.tolist(), # For debugging
+            "R_total": R_total.tolist(), # For debugging
             "normalized_coords": normalized_coords.tolist() # For debugging
         }

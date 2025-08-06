@@ -161,7 +161,7 @@ class Detection:
                     detection.id = "0" 
                     detection_array.detections.append(detection)
                     
-                    # print the bounding box center coordinates
+                    # 在检测到目标后打印边界框中心坐标
                     # print(f"Bounding box center: x={center_x}, y={center_y} (width, height)")
                     
                     # # Process keypoints if available

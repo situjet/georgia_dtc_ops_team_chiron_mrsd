@@ -17,7 +17,7 @@ class Streaming:
         self.rtsp_url = 'rtsp://10.3.1.124:8554/ghadron'
         self.WIDTH = 640
         self.HEIGHT = 512
-        self.fps = 6
+        self.fps = 10
         self.is_running = True
         self.retry_count = 0
         self.retry_max = 10
@@ -46,12 +46,13 @@ class Streaming:
         try:
             # First try Jetson-specific hardware decoder (Orin NX)
             jetson_pipeline = (
-                f"rtspsrc location={self.rtsp_url} latency=0 ! "
-                "rtph265depay ! h265parse ! nvv4l2decoder enable-max-performance=1 ! "  # Jetson hardware decoder
-                "nvvidconv ! "  # Jetson-specific video converter
-                f"video/x-raw(memory:NVMM),width={self.WIDTH},height={self.HEIGHT} ! "
-                "nvvidconv ! video/x-raw,format=BGRx ! "
-                "videoconvert ! video/x-raw,format=BGR ! "
+                f"rtspsrc location={self.rtsp_url} latency=0 ! queue ! "
+                "rtph265depay ! queue ! h265parse ! queue ! nvv4l2decoder enable-max-performance=1 ! queue ! "
+                "nvvidconv ! "
+                f"video/x-raw(memory:NVMM),width={self.WIDTH},height={self.HEIGHT} ! queue ! "
+                "videorate ! video/x-raw(memory:NVMM),framerate=5/1 ! queue ! "
+                "nvvidconv ! video/x-raw ! queue ! " 
+                "videoconvert ! video/x-raw,format=BGR ! queue ! "
                 "appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
             )
             
@@ -66,10 +67,11 @@ class Streaming:
             try:
                 # Standard NVIDIA GPU decoder
                 nvidia_pipeline = (
-                    f"rtspsrc location={self.rtsp_url} latency=0 ! "
-                    "rtph265depay ! h265parse ! nvh265dec ! "  # NVIDIA GPU-accelerated H.265 decoder
-                    f"videoscale ! video/x-raw,width={self.WIDTH},height={self.HEIGHT} ! "
-                    "videoconvert ! video/x-raw,format=BGR ! "
+                    f"rtspsrc location={self.rtsp_url} latency=0 ! queue ! "
+                    "rtph265depay ! queue ! h265parse ! queue ! nvh265dec ! queue ! "
+                    "videorate ! video/x-raw,framerate=5/1 ! queue ! "
+                    f"videoscale ! video/x-raw,width={self.WIDTH},height={self.HEIGHT} ! queue ! "
+                    "videoconvert ! video/x-raw,format=BGR ! queue ! "
                     "appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
                 )
                 
@@ -83,10 +85,11 @@ class Streaming:
                 try:
                     # Try VA-API (Intel/AMD GPU)
                     vaapi_pipeline = (
-                        f"rtspsrc location={self.rtsp_url} latency=0 ! "
-                        "rtph265depay ! h265parse ! vaapih265dec ! "  # VA-API GPU-accelerated H.265 decoder
-                        f"videoscale ! video/x-raw,width={self.WIDTH},height={self.HEIGHT} ! "
-                        "videoconvert ! video/x-raw,format=BGR ! "
+                        f"rtspsrc location={self.rtsp_url} latency=0 ! queue ! "
+                        "rtph265depay ! queue ! h265parse ! queue ! vaapih265dec ! queue ! "
+                        "videorate ! video/x-raw,framerate=5/1 ! queue ! "
+                        f"videoscale ! video/x-raw,width={self.WIDTH},height={self.HEIGHT} ! queue ! "
+                        "videoconvert ! video/x-raw,format=BGR ! queue ! "
                         "appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
                     )
                     
@@ -100,10 +103,11 @@ class Streaming:
                     # Fallback to software decoding
                     print("No GPU accelerated decoder found, using software decoder")
                     return (
-                        f"rtspsrc location={self.rtsp_url} latency=0 buffer-mode=auto ! "
-                        "rtph265depay ! h265parse ! avdec_h265 max-threads=4 ! "  # Multi-threaded software decoder
-                        f"videoscale ! video/x-raw,width={self.WIDTH},height={self.HEIGHT} ! "
-                        "videoconvert ! video/x-raw,format=BGR ! "
+                        f"rtspsrc location={self.rtsp_url} latency=0 buffer-mode=auto ! queue ! "
+                        "rtph265depay ! queue ! h265parse ! queue ! avdec_h265 max-threads=4 ! queue ! "
+                        "videorate ! video/x-raw,framerate=5/1 ! queue ! "
+                        f"videoscale ! video/x-raw,width={self.WIDTH},height={self.HEIGHT} ! queue ! "
+                        "videoconvert ! video/x-raw,format=BGR ! queue ! "
                         "appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
                     )
         
@@ -255,6 +259,7 @@ def main():
     pipeline_str = (
         f"rtspsrc location={rtsp_url} latency=0 ! "
         "rtph265depay ! h265parse ! avdec_h265 ! "
+        "videorate ! video/x-raw,framerate=5/1 ! "  # 限制帧率到10fps
         "videoconvert ! autovideosink"
     )
 
