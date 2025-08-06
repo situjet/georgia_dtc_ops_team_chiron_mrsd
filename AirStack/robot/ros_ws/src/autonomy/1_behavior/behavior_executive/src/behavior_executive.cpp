@@ -339,10 +339,10 @@ void BehaviorExecutive::timer_callback() {
                 // Blair / Mil 19
                 geofence_points_input = {
                     //{40.4253101, -79.9544781},
-                    {40.4252678, -79.9545928},
-                    {40.4254007, -79.9542703},
-                    {40.4252553, -79.9541187},
-                    {40.4250965, -79.9543229}  //{40.4251402, -79.9542884}
+                    {40.4141646, -79.9475044},
+                    {40.4138379, -79.9475000},
+                    {40.4137503, -79.9479319},
+                    {40.4140025, -79.9480247}
                 };
                 RCLCPP_INFO(this->get_logger(), "Using Blair / Mil 19 predefined geofence");
                 // Hawkins Field
@@ -379,9 +379,9 @@ void BehaviorExecutive::timer_callback() {
             double meters_per_deg_lon =
                 111111.0 * std::cos(center_lat * M_PI / 180.0);  // Use standardized constant
 
-            double footprint_width = 3.5;
+            double footprint_width = 5;
             double overlap_percentage = 10.0;
-            double safe_distance = 2.0;  // Safe distance from the geofence boundary in meters
+            double safe_distance = 1.0;  // Safe distance from the geofence boundary in meters
 
             // Calculate safe distance in degrees
             double safe_dist_lat = safe_distance / meters_per_deg_lat;
@@ -605,9 +605,9 @@ void BehaviorExecutive::timer_callback() {
 
             // Push the generated waypoints
             push_waypoints(geofence_mapping_action, nav_waypoints, 10,
-                           1.5,   // Using 0.0 hold time
+                           0.0,   // Using 0.0 hold time
                            {},    // No yaws for geofence mapping
-                           0.5);  // Acceptance radius for geofence mapping
+                           0.3);  // Acceptance radius for geofence mapping
         }
     }
 
