@@ -1,14 +1,14 @@
 import math
 
 # Example caps (use real specs for your gimbal!)
-PITCH_MIN = -120.0  # up
-PITCH_MAX = 120.0  # down
+PITCH_MIN = -120.0  # down
+PITCH_MAX = 120.0  # up
 YAW_MIN = -170.0 # left
 YAW_MAX = 170.0 # right
 
 ###needs to be set as an model parameter
 # Center reference pitch angle (when target is at image center)
-CENTER_PITCH = -50.0
+#CENTER_PITCH = -50.0
 
 # Dampening factors to prevent overadjustment (can be tuned)
 PITCH_GAIN = 0.5  # Reduce pitch movement by half
@@ -65,8 +65,8 @@ def compute_gimbal_command(u, v, cx, cy, fx, fy, curr_pitch_deg, curr_yaw_deg):
     
     # New target angles
     new_yaw_deg = curr_yaw_deg + yaw_offset_deg
-    # For pitch, use CENTER_PITCH as the reference when target is centered
-    new_pitch_deg = CENTER_PITCH + pitch_offset_deg
+    # For pitch
+    new_pitch_deg = curr_pitch_deg + pitch_offset_deg
     print(f"[TRACK] New target angles (before clamping): pitch={new_pitch_deg}°, yaw={new_yaw_deg}°")
 
     # After computing new_pitch and new_yaw
