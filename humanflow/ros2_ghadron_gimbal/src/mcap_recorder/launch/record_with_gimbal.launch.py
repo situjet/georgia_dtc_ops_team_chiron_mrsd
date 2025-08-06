@@ -10,8 +10,8 @@ def generate_launch_description():
             output='screen'
         ),
         Node(
-            package='adi_recorder',
-            executable='rtsp_node',
+            package='mcap_recorder',
+            executable='mcap_node',
             name='recorder',
             output='screen'
         )

@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 import os
 from glob import glob
 
-package_name = 'adi_recorder'
+package_name = 'mcap_recorder'
 
 setup(
     name=package_name,
@@ -18,12 +18,12 @@ setup(
     zip_safe=True,
     maintainer='mrsd',
     maintainer_email='yufanliu@andrew.cmu.edu',
-    description='RTSP stream publisher with MCAP recording for ROS2',
+    description='MCAP recorder for video and telemetry data',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'rtsp_node = adi_recorder.recorder:main'
+            'mcap_node = mcap_recorder.recorder:main'
         ],
     },
 ) 
