@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>gimbal_control</name>
+  <version>0.0.1</version>
+  <description>Basic gimbal connection and streaming control node.</description>
+  <maintainer email="your@email.com">Your Name</maintainer>
+  <license>BSD</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <export/>
+</package>

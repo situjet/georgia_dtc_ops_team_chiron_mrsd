@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>mavros_interface</name>
+  <version>0.0.1</version>
+  <description>MAVROS interface for autopilot connection</description>
+  <maintainer email="user@example.com">User</maintainer>
+  <license>BSD</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>mavros</exec_depend>
+</package>

@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>behavior_governor</name>
+  <version>0.0.1</version>
+  <description>Behavior Governor for modular vehicle behaviors (C++ core, Python extensible)</description>
+  <maintainer email="user@example.com">User</maintainer>
+  <license>BSD</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>rclcpp</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>mavros_msgs</exec_depend>
+</package>

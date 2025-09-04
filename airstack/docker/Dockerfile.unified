@@ -1,0 +1,129 @@
+# Unified ROS2 Humble Dockerfile for AirStack + Gimbal
+# This Dockerfile combines the requirements of the old AirStack and Gimbal containers into a single image.
+# Base image: osrf/ros:humble-desktop-full (as used by AirStack)
+
+FROM osrf/ros:humble-desktop-full
+
+WORKDIR /root/ros_ws
+
+# Install dev tools and common utilities
+RUN apt-get update && apt-get install -y \
+    vim nano wget curl tree \
+    cmake build-essential \
+    less htop jq \
+    python3-pip \
+    tmux \
+    gdb \
+    openssh-server \
+    git \
+    lsb-release \
+    gnupg2 \
+    ffmpeg \
+    libeigen3-dev \
+    libopencv-dev \
+    libboost-all-dev \
+    libglib2.0-dev \
+    libcurl4-openssl-dev \
+    libjsoncpp-dev \
+    pkg-config \
+    libyaml-cpp-dev \
+    libprotobuf-dev \
+    protobuf-compiler \
+    libfftw3-dev \
+    libspdlog-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libtiff-dev \
+    libtinyxml2-dev \
+    libzmq3-dev \
+    libxml2-dev \
+    libssl-dev \
+    gstreamer1.0-tools \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libgstreamer-plugins-bad1.0-dev \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
+    qtbase5-dev \
+    libqt5core5a \
+    libqt5gui5 \
+    libqt5widgets5 \
+    libqt5network5 \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    python3-dev \
+    python3-numpy \
+    python3-argcomplete \
+    ros-humble-mavros \
+    ros-humble-mavros-extras \
+    ros-humble-tf2* \
+    ros-humble-stereo-image-proc \
+    ros-humble-image-view \
+    ros-humble-topic-tools \
+    ros-humble-grid-map \
+    ros-humble-domain-bridge \
+    ros-humble-cv-bridge \
+    ros-humble-vision-opencv \
+    ros-humble-vision-msgs \
+    ros-humble-camera-info-manager \
+    ros-humble-image-transport \
+    ros-humble-image-transport-plugins \
+    ros-humble-rosbag2-storage-mcap \
+    ros-humble-ros-base \
+    ros-humble-ros-core \
+    ros-dev-tools \
+    libcgal-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir \
+    empy \
+    future \
+    lxml \
+    matplotlib \
+    numpy<2.0.0 \
+    pkgconfig \
+    psutil \
+    pygments \
+    wheel \
+    pymavlink \
+    pyyaml \
+    requests \
+    setuptools \
+    six \
+    toml \
+    scipy \
+    ultralytics \
+    tqdm
+
+# Add ability to SSH
+RUN mkdir /var/run/sshd
+RUN echo 'root:airstack' | chpasswd
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+RUN sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd
+EXPOSE 22
+
+# Install geographiclib datasets required by MAVROS
+RUN wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh && \
+    chmod +x install_geographiclib_datasets.sh && \
+    ./install_geographiclib_datasets.sh && \
+    rm install_geographiclib_datasets.sh
+
+# Set up ROS environment
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+RUN echo 'export PATH=$PATH:/opt/ros/humble/bin' >> ~/.bashrc
+
+
+# Copy ROS2 workspace
+COPY ../ros_ws /root/ros_ws
+WORKDIR /root/ros_ws
+
+# Build workspace
+RUN . /opt/ros/humble/setup.sh && bash build.sh
+
+# Entrypoint: launch robot_bringup (starts mavros and domain_bridge)
+ENTRYPOINT ["/root/ros_ws/entrypoint.sh"]
