@@ -1,14 +1,3 @@
-docker-compose --version
-docker compose --profile hitl up -d
-docker compose --profile hitl up -d
-docker compose -f docker-compose.yaml down
-docker compose -f docker-compose.yaml up -d
-docker ps
-docker exec -it ros2_ghadron_gimbal bash
-docker ps
-docker exec -it robot_l4t bash
-docker exec -it ground-control-station-real bash
-docker compose down
 # DTC-MRSD Unified Autonomy & Gimbal Control
 
 ## Overview
