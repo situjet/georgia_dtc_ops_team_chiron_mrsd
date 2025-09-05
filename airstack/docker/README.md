@@ -64,15 +64,12 @@ RUN apt-get update && apt-get install -y <package-name>
 ---
 
 ## Running the Docker Container
-1. Run the container interactively:
+1. Jetson Orin NX (recommended): use the working AirStack L4T image and run:
    ```bash
-   docker run -it --rm \
-     -v $(pwd)/../ros_ws:/ros_ws \
-     <image-name>:<tag> /bin/bash
+   ./run_unified.sh
    ```
-   - The `-v` flag mounts your local workspace for live code editing.
-   - Adjust paths as needed for your setup.
-2. The container will start in `/ros_ws` by default.
+   This script pulls the ghcr.io/strapsai/airstack L4T image, mounts `../ros_ws`, builds if needed, and launches `robot_bringup`.
+2. For custom local runs, you can still `docker run` manually as needed.
 
 ---
 

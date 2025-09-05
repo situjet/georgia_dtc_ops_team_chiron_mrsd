@@ -1,2 +1,12 @@
-# Example domain_bridge config
-# Copy from old AirStack or customize as needed
+name: robot_domain_bridge
+from_domain: 0
+to_domain: 1
+topics:
+  mavros/state:
+    type: mavros_msgs/msg/State
+  behavior_governor/status:
+    type: std_msgs/msg/String
+  behavior_governor/command:
+    type: std_msgs/msg/String
+    from_domain: 1
+    to_domain: 0
