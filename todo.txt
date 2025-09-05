@@ -1,19 +1,21 @@
 1. Airstack
-a. Flight mode needs to validated for the new waypoint clicky mode. (ROS Foxglove thing? Publish coordinates)
-b. Ensure corridor flight navigation for drone on course entry and exit. There is a staging area, and there's the course, which is separated. 
+a. Lance/Jet: Flight mode needs to validated for the new waypoint clicky mode. (ROS Foxglove thing? Publish coordinates)
+b. Josh: Ensure corridor flight navigation for drone on course entry and exit. There is a staging area, and there's the course, which is separated. 
 For safety reasons, the only way UAVs can enter/exit the course is through the corridor. Which means, we need an flight algo that always paths through the corridor for entry/exit.
 c. Burst mode/trigger. When operator signals to, the following needs to happen:
-- The current GPS and gimbal location needs to be logged. The operator will hold the drone in place for 10 seconds.
-- High quality image is taken, high quality video is taken for 10 seconds at 24fps (or higher)
-- Data is stored LOCALLY to an mcap when completed that contains all relevant information.
-- Geolocation estimate must happen during this phase, and sent back.
-Upon completion of the burst mode, all data is packaged and sent as a singular data point back to the UGV base station, through the Dell and through the one-way switch.
+- Wuyi: The current GPS and gimbal location needs to be logged. The operator will hold the drone in place for 10 seconds.
+- Wuyi: High quality image is taken, high quality video is taken for 10 seconds at 24fps (or higher)
+- Wuyi: Data is stored LOCALLY to an mcap when completed that contains all relevant information.
+- Lance: Geolocation estimate must happen during this phase, and sent back.
+Wuyi: Upon completion of the burst mode, all data is packaged and sent as a singular data point back to the UGV base station, through the Dell and through the one-way switch.
 
 2. Operator (Ground Control Station aka the Dell Laptop + the Yawman + the ground radio)
-a. Wuyi - work with Swastik to connect the Dell laptop to the UGV base station. Ensure that communication is one-way. (START IMMEDIATELY, NO BLOCKERS)
-b. Develop either a faster way of operating QGC, or make a quick waypoint clickable interface to move across the field. (could you just use foxglove?) (NO TYPING) (CLICKING ONLY) (also include a possible override for when we accidentally hover over someone)
-c. Repair and validate Yawman controller can actually control the gimbal
-d. Validate Foxglove UI to active mission/pub/sub low frame low fidelity livestream for operator action.
-e. Yawman add button that connects to the burst system and geolocation system on the drone. (trigger button)
+a. Wuyi/Josh - work with Swastik to connect the Dell laptop to the UGV base station. Ensure that communication is one-way. (START IMMEDIATELY, NO BLOCKERS)
+b. Josh: Develop either a faster way of operating QGC, or make a quick waypoint clickable interface to move across the field. (could you just use foxglove?) (NO TYPING) (CLICKING ONLY) (also include a possible override for when we accidentally hover over someone)
+c. Jet: Repair and validate Yawman controller can actually control the gimbal
+d. Jet: Validate Foxglove UI to active mission/pub/sub low frame low fidelity livestream for operator action.
+e. Jet: Yawman add button that connects to the burst system and geolocation system on the drone. (trigger button)
 
 3. Misc
+Jet - Restrict ROS Domains for data-link purposes (ideally we should transmit as little as possible over DTC to avoid crowding the network) 
+Jet/Lance/Wuyi: Synchrnoize MCAP data format* with Lockheed (this is to be done before 9/10)
