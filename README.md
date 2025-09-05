@@ -1,250 +1,195 @@
-# DTC-MRSD Drone Autonomy & Gimbal Control Repository
-
-## Introduction
-
-This repository contains code for drone autonomy and gimbal control systems, primarily focusing on the humanflow ROS2 gimbal control system. This system allows users to control the drone's gimbal for target tracking and monitoring tasks.
-
-## Repository Structure
-
-- **AirStack/**: Air stack components for drone control
-- **AirStack_GCS/**: Ground control station components
-- **humanflow/**: ROS2-based gimbal control system
-  - **ros2_ghadron_gimbal/**: Main gimbal control workspace
-  - **docker/**: Docker configurations for the workspace
-  - **mcap_data/**: Recorded data in MCAP format
-
-## Installation Instructions
-
-### Installing Docker and Docker Compose
-
-1. Install Docker:
-
-```bash
-# Update package index
-sudo apt-get update
-
-# Install dependencies
-sudo apt-get install apt-transport-https ca-certificates curl software-properties-common
-
-# Add Docker's official GPG key
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-
-# Set up the stable repository
-sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-
-# Install Docker Engine
-sudo apt-get update
-sudo apt-get install docker-ce docker-ce-cli containerd.io
-
-# Add current user to docker group to avoid using sudo
-sudo usermod -aG docker $USER
-```
-
-2. Install Docker Compose:
-
-```bash
-# Download Docker Compose
-sudo curl -L "https://github.com/docker/compose/releases/download/v2.18.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-
-# Apply executable permissions
-sudo chmod +x /usr/local/bin/docker-compose
-
-# Test installation
 docker-compose --version
-```
-
-### Clone the Repository
-
-```bash
-git clone https://github.com/your-organization/DTC-MRSD.git
-cd DTC-MRSD
-```
-
-## Configuration Instructions
-
-### Setting up the Docker Environment
-
-#### Robot Component
-
-1. Navigate to the AirStack directory:
-
-```bash
-cd AirStack
-```
-
-2. Build and start the robot Docker container:
-
-```bash
-# Build the robot container (HITL profile for Hardware-In-The-Loop)
-docker compose --profile hitl build
-
-# Start the robot container
 docker compose --profile hitl up -d
-```
-
-#### Ground Control Station (GCS) Component
-
-1. Navigate to the AirStack_GCS directory:
-
-```bash
-cd AirStack_GCS
-```
-
-2. Build and start the ground control station Docker container:
-
-```bash
-# Build the GCS container (HITL profile for Hardware-In-The-Loop)
-docker compose --profile hitl build
-
-# Start the GCS container
 docker compose --profile hitl up -d
-```
-
-#### Gimbal Component
-
-1. Navigate to the Docker configuration directory:
-
-```bash
-cd humanflow/ros2_ghadron_gimbal/dockers
-```
-
-2. Start the Docker containers:
-
-```bash
 docker compose -f docker-compose.yaml down
 docker compose -f docker-compose.yaml up -d
-```
-
-### Permission Settings
-
-Ensure the workspace has the correct permissions:
-
-```bash
-# Modify the permissions for the entire workspace
-sudo chown -R $USER:$USER /home/dtc/humanflow/ros2_ghadron_gimbal
-
-# Ensure installation directory has correct permissions
-sudo chmod -R 755 /home/dtc/humanflow/ros2_ghadron_gimbal/install
-
-# Especially for the site-packages directory
-sudo chmod -R 755 /home/dtc/humanflow/ros2_ghadron_gimbal/install/detect_and_track/lib/python3.10/site-packages
-```
-
-## Operating Instructions
-
-### Development Workflow
-
-#### 1. SSH into the Remote Machine
-
-```bash
-ssh dtc@10.3.1.32
-```
-
-#### 2. Check Running Docker Containers
-
-Ensure that the `[robot_l4t]` and `[gimbal]` containers are running:
-
-```bash
 docker ps
-```
-
-#### 3. Set Up Local Editing Environment
-
-On your local machine, mount the remote directory using SSHFS:
-
-```bash
-sshfs dtc@10.3.1.32:/home/dtc/humanflow [path to your desired working directory]/mount
-```
-
-This allows you to edit files locally while the code runs on the remote machine.
-
-#### 4. Connect to the Gimbal
-
-```bash
-# Enter the gimbal Docker container
 docker exec -it ros2_ghadron_gimbal bash
-
-# Launch the gimbal connection
-ros2 launch gimbal_bringup gimbal_system.launch.py
-```
-
-**Note**: You should replace the radio ethernet with your own and connect to your laptop when working on it. The gimbal information goes to the Orin, and from the Orin to your machine.
-
-#### 5. Build After Editing
-
-When you've made changes to the code:
-
-```bash
-# Remove existing build, install, and log directories
-./r_gimbal.sh
-
-# Rebuild the selected packages
-./b_gimbal.sh
-```
-
-#### 6. Run the Code
-
-Run the code on the DTC host machine (not your local mount) using the same steps as in step 4.
-
-### Common Commands
-
-#### Docker Commands
-
-```bash
-# View running containers
 docker ps
-
-# Enter robot container
 docker exec -it robot_l4t bash
-
-# Enter ground control station container
 docker exec -it ground-control-station-real bash
-
-# Stop all containers
 docker compose down
-```
+# DTC-MRSD Unified Autonomy & Gimbal Control
 
-#### Build Commands
+## Overview
+
+The system has been consolidated into a single (unified) ROS 2 Humble container that launches the flight autonomy stack (MAVROS + behavior governor + domain bridge) and provides the gimbal control nodes in the same workspace. Legacy multi-container (robot / GCS / humanflow gimbal) instructions have been deprecated and moved under `old/` for reference.
+
+## Key Components (Current Runtime)
+
+Launched automatically (via `robot.launch.xml`) inside the unified container:
+- PX4 / MAVROS interface (`mavros_interface/px4.launch`)
+- `behavior_governor` node (autonomy behavior management)
+- `domain_bridge` (intra-domain/topic bridging per `domain_bridge.yaml`)
+
+Available to run manually inside the container:
+- `gimbal_control_node`, `gimbal_status_node`, `gimbal_angle_control_node` (package: `gimbal_control`)
+
+Legacy / reference only:
+- ROS1 teleoperation node (`operator/ros_ws/src/gimbal_teleop`) – not part of the current default runtime.
+
+## Repository Structure (Active vs Legacy)
+
+- `airstack/` – Active unified ROS2 workspace (`ros_ws/`)
+  - `docker/Dockerfile.unified` – Build recipe for the unified image
+  - `docker/run_unified.sh` – Helper script to start the unified runtime
+  - `ros_ws/` – ROS2 workspace (packages: autonomy, behavior_governor, gimbal_control, robot_bringup, etc.)
+- `operator/` – (Optional) legacy ROS1 teleop example
+- `old/` – Historical multi-container stacks (no longer maintained)
+
+## Prerequisites
+
+Install Docker (and NVIDIA Container Toolkit if using Jetson / GPU). Docker Compose is not required for the unified flow.
+
+## Quick Start
+
 ```bash
-# Remove existing build artifacts
-./r_gimbal.sh  # Removes install/inted_gimbal, install/payload, build/inted_gimbal, build/payload
-
-# Build selected packages
-./b_gimbal.sh  # Runs: colcon build --packages-select payload inted_gimbal
+git clone <repo_url>
+cd georgia_dtc_ops_team_chiron_mrsd
 ```
 
-#### Gimbal Control Commands
+### 1. Build the Unified Image (if you need a fresh build)
+
+The Dockerfile expects build context at `airstack/docker` so that `../ros_ws` is available for COPY.
+
 ```bash
-# Launch the gimbal system
-ros2 launch gimbal_bringup gimbal_system.launch.py
-
-# Send control commands (pitch=0, roll=0, yaw=90)
-ros2 topic pub /gimbal_angles geometry_msgs/msg/Vector3 "{x: 0.0, y: 0.0, z: 90.0}"
+cd airstack/docker
+docker build -f Dockerfile.unified -t airstack-unified:latest .
 ```
 
-#### Mode Control
+### 2. Launch the Unified Container (recommended script)
+
+From the repo root or from within `airstack/docker`:
+
 ```bash
-# EO mode (Electro-Optical mode)
-./eo_mode.sh
-
-# IR mode (Infrared mode)
-./ir_mode.sh
-
-# Lock the gimbal
-./lock.sh
-
-# Point the gimbal downward
-./pointdown.sh
-
-# Return to home position
-./homing.sh
+./airstack/docker/run_unified.sh
 ```
 
-## Additional Notes
+This script:
+1. Locates (without pulling) a suitable previously-built L4T AirStack image (or fails fast)
+2. Starts container `airstack-unified` with:
+   - Host networking
+   - NVIDIA runtime (`--runtime nvidia`)
+   - Mounted ROS workspace (`airstack/ros_ws` → `/root/ros_ws`)
+   - SSH service enabled
+   - Auto (re)build if `robot_bringup` not installed
+3. Launches `robot_bringup/robot.launch.xml`
+4. Streams logs to your terminal
 
-- The pitch range of the gimbal is -90 (pointing down) to 90 (pointing up)
-- The yaw range of the gimbal is -120 (left) to 120 (right)
-- It's recommended to change directions incrementally (e.g., by 10 degrees each time) to avoid gimbal lock
-- Main gimbal control path: `/home/dtc/humanflow/ros2_ghadron_gimbal/src/inted_gimbal/`
-- The robot_l4t container uses NVIDIA runtime for GPU acceleration
-- Both the robot_l4t and ground control station containers use host network mode for direct communication 
+If you want to force using the freshly built `airstack-unified:latest` image, temporarily tag / retag it to match the script’s discovery pattern or adjust the script (future enhancement: add explicit IMAGE override variable).
+
+### 3. Verify Runtime
+
+In another terminal:
+```bash
+docker ps --filter name=airstack-unified
+docker logs -f airstack-unified | grep behavior_governor
+```
+
+You should see MAVROS connection attempts and the behavior governor starting.
+
+### 4. Enter the Container
+
+```bash
+docker exec -it airstack-unified bash
+source /opt/ros/humble/setup.bash
+source /root/ros_ws/install/setup.bash
+```
+
+### 5. Run Gimbal Nodes (Manual)
+
+```bash
+ros2 run gimbal_control gimbal_status_node
+ros2 run gimbal_control gimbal_control_node
+ros2 run gimbal_control gimbal_angle_control_node
+```
+
+Example command to publish an angle vector (pitch=x, yaw=y, zoom=z placeholder):
+```bash
+ros2 topic pub /gimbal_angles geometry_msgs/msg/Vector3 "{x: 0.0, y: 0.0, z: 90.0}" -r 1
+```
+
+### 6. Rebuilding After Code Changes
+
+Because the workspace is bind-mounted, edit code on the host then inside the container:
+```bash
+cd /root/ros_ws
+colcon build --symlink-install --merge-install
+source install/setup.bash
+```
+
+If build artifacts get inconsistent:
+```bash
+rm -rf build install log
+colcon build --symlink-install --merge-install
+```
+
+### 7. Stopping / Restarting
+
+```bash
+docker stop airstack-unified
+./airstack/docker/run_unified.sh   # restart
+```
+
+## Environment Variables (Runtime)
+
+Set before invoking `run_unified.sh` to override defaults:
+
+| Variable        | Purpose                                    | Default |
+|-----------------|--------------------------------------------|---------|
+| `ROBOT_NAME`    | Logical robot name (sanitized to namespace)| `robot_1` |
+| `ROBOT_NAMESPACE` | (Derived) ROS namespace                  | (sanitized `ROBOT_NAME`) |
+| `ROS_DOMAIN_ID` | DDS domain isolation                       | `70` |
+
+Example:
+```bash
+export ROBOT_NAME=field_unit_a
+export ROS_DOMAIN_ID=42
+./airstack/docker/run_unified.sh
+```
+
+## What the Entrypoint Launches
+
+`airstack/ros_ws/entrypoint.sh` sources ROS, then launches:
+```
+ros2 launch robot_bringup robot.launch.xml
+```
+Which (see `robot_bringup/launch/robot.launch.xml`) includes:
+- MAVROS PX4 interface
+- behavior_governor (respawn)
+- domain_bridge (respawn)
+
+`gimbal_control` nodes are intentionally NOT auto-started—run only what you need.
+
+## Legacy Components
+
+The previous separation into:
+- Robot (L4T) container
+- Ground Control Station container
+- Separate humanflow gimbal container
+
+is retained only under `old/` for archival purposes. Do not mix those instructions with the unified flow.
+
+## Gimbal Notes
+
+- Pitch range: -90° (down) to +90° (up)
+- Yaw range: -120° to +120°
+- Prefer incremental movements to avoid saturating control
+
+## Troubleshooting
+
+| Symptom | Check |
+|---------|-------|
+| Container exits immediately | View `docker logs airstack-unified` for build or launch errors |
+| MAVROS not connecting | Verify serial/device mappings (add device mounts if needed) |
+| Nodes not found | Rebuild: remove `build install log` then `colcon build` |
+| Gimbal topic absent | Ensure you started the desired `gimbal_control` node |
+
+## Next Steps (Planned Enhancements)
+
+- Add launch file to optionally auto-start gimbal nodes
+- Allow IMAGE override in `run_unified.sh`
+- Provide ROS1→ROS2 bridge or pure ROS2 teleop replacement
+
+---
+For historical documentation, consult files under `old/`. This README reflects the CURRENT supported unified workflow.
