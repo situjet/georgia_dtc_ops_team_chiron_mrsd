@@ -7,7 +7,7 @@ c. Burst mode/trigger. When operator signals to, the following needs to happen:
 - Wuyi: High quality image is taken, high quality video is taken for 10 seconds at 24fps (or higher)
 - Wuyi: Data is stored LOCALLY to an mcap when completed that contains all relevant information.
 - Lance: Geolocation estimate must happen during this phase, and sent back.
-Wuyi: Upon completion of the burst mode, all data is packaged and sent as a singular data point back to the UGV base station, through the Dell and through the one-way switch.
+Lance: Upon completion of the burst mode, all data is packaged and sent as a singular data point back to the UGV base station, through the Dell and through the one-way switch.
 
 2. Operator (Ground Control Station aka the Dell Laptop + the Yawman + the ground radio)
 a. Wuyi/Josh - work with Swastik to connect the Dell laptop to the UGV base station. Ensure that communication is one-way. (START IMMEDIATELY, NO BLOCKERS)
