@@ -17,5 +17,4 @@ d. Jet: Validate Foxglove UI to active mission/pub/sub low frame low fidelity li
 e. Jet: Yawman add button that connects to the burst system and geolocation system on the drone. (trigger button)
 
 3. Misc
-Jet - Restrict ROS Domains for data-link purposes (ideally we should transmit as little as possible over DTC to avoid crowding the network) 
 Jet/Lance/Wuyi: Synchrnoize MCAP data format* with Lockheed (this is to be done before 9/10)
