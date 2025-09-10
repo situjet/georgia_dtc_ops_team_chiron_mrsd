@@ -1,0 +1,127 @@
+# Configuration parameters for Vision GPS Estimator
+# ==================================================
+# Enhanced configuration for AirStack integration
+
+vision_gps_estimator:
+  ros__parameters:
+    # Node identification and diagnostics
+    node_name: "vision_gps_estimator"
+    publish_diagnostics: true
+    diagnostics_period: 10.0  # seconds
+    
+    # Streaming configuration
+    streaming:
+      rtsp_url: "rtsp://10.3.1.124:8554/ghadron"
+      width: 1080 #640
+      height: 720 #512
+      fps: 5
+      retry_max: 10
+      retry_delay: 2.0
+      buffer_size: 10 #decrease for shorter delays
+      
+    # Detection configuration  
+    detector:
+      model_path: "yolo12s.pt"
+      conf_threshold: 0.5
+      iou_threshold: 0.45
+      max_detections: 10
+      input_size: 640
+      target_classes: [0]  # Person class only
+      enable_preprocessing: false
+      
+    # Synchronization settings
+    sync:
+      max_sync_time_diff: 0.1  # seconds - tighter sync for better accuracy
+      buffer_size: 20  # sensor reading buffer size
+    
+    # Output settings
+    output:
+      jpeg_quality: 10
+      publish_local_enu: false
+      publish_camera_info: true
+      sigma_lat_lon_m: 5.0  # GPS estimation uncertainty
+      
+    # Primary target selection
+    target_selection:
+      method: "score"  # "score" or "score_center" 
+      center_bias_weight: 0.3  # when using score_center method
+      
+    # Camera settings
+    camera:
+      mode: "EO"  # EO or IR
+      auto_scale_with_resolution: true
+      
+    # Camera intrinsics (will be loaded and scaled based on mode and resolution)
+    camera_intrinsics:
+      EO:
+        # Calibrated for 640x512 resolution
+        fx: 515.1042901585477
+        fy: 515.1042901585475
+        cx: 320.0
+        cy: 256.0
+        distortion: [0.0, 0.0, 0.0, 0.0, 0.0]  # k1, k2, p1, p2, k3
+        calibration_resolution: [640, 512]
+      IR:
+        # Calibrated for 1280x720 resolution  
+        fx: 2267.0
+        fy: 1593.0
+        cx: 640.0
+        cy: 360.0
+        distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+        calibration_resolution: [1280, 720]
+        
+    # GPS estimation settings
+    gps_estimation:
+      min_distance_threshold: 5.0  # meters between distinct targets
+      max_cluster_age_hours: 24.0  # cleanup old clusters
+      cluster_buffer_size: 30
+      
+    # Topic remapping (can be overridden in launch file)
+    topics:
+      # Input topics
+      mavros_gps: "/robot_1/mavros/global_position/global"
+      mavros_altitude: "/robot_1/mavros/global_position/rel_alt"
+      mavros_heading: "/robot_1/mavros/global_position/compass_hdg"
+      gimbal_attitude: "/gimbal_attitude"
+      camera_mode: "/camera_mode"
+      
+      # Output topics  
+      image_compressed: "/vision_gps/image_compressed"
+      camera_info: "/vision_gps/camera_info"
+      detections: "/vision_gps/detections"
+      target_gps: "/vision_gps/target_gps"
+      target_gps_list: "/vision_gps/target_gps_list"
+      target_local_enu: "/vision_gps/target_local_enu"  # optional
+      
+    # QoS settings
+    qos:
+      # Sensor data (images, detections) - best effort for low latency
+      sensor_data:
+        reliability: "best_effort"
+        durability: "volatile"
+        depth: 1
+        
+      # State data (GPS, altitude, etc.) - reliable for consistency  
+      state_data:
+        reliability: "reliable"
+        durability: "volatile"
+        depth: 10
+        
+      # Target outputs - reliable for downstream processing
+      target_data:
+        reliability: "reliable"
+        durability: "volatile"
+        depth: 5
+        
+    # Performance monitoring
+    performance:
+      enable_profiling: false  # disable by default in production
+      profiling_report_interval: 300.0  # seconds
+      log_performance_stats: true
+      stats_log_interval: 30.0  # seconds
+      
+    # Logging configuration
+    logging:
+      level: "INFO"  # DEBUG, INFO, WARN, ERROR
+      log_to_file: false
+      log_file_path: "/tmp/vision_gps_estimator.log"
