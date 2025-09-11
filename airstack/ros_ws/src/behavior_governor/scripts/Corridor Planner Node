@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""
+corridor_waypoint_publisher.py (ROS2, no MAVROS)
+
+Behavior:
+- Waits for BOTH:
+  (1) 'region_polygons' (Float64MultiArray, 24 floats) and
+  (2) 'sequence_mode' (Int32: 0=normal, 1=reverse).
+- Computes 5 GPS waypoints (geofence->corridor->landing) and then publishes them
+  ONE-BY-ONE to a ROS2 topic (NavSatFix). No MAVROS involved.
+- Listens to a GPS topic (NavSatFix) to detect arrival before publishing the next waypoint.
+- Optionally re-publishes the current target at a fixed rate for robustness.
+
+Parameters (with defaults):
+- input_topic: 'region_polygons'              # Float64MultiArray (24 floats)
+- mode_topic: 'sequence_mode'                 # Int32 (0 or 1) — TRIGGERS mission
+- gps_input_topic: '/fix'                     # NavSatFix — robot's current GPS
+- waypoint_topic: '/waypoint_target'          # NavSatFix — published current target
+- inside_offset_m: 5.0                        # P1 offset into geofence along entry-edge normal
+- reach_radius_m: 2.0                         # distance threshold to consider "reached"
+- stable_checks: 10                           # consecutive checks within radius to advance
+- check_rate_hz: 10.0                         # how often to evaluate progress
+- publish_rate_hz: 2.0                        # how often to re-publish current target
+- target_alt_m: 30.0                          # altitude if use_current_alt is False
+- use_current_alt: True                       # copy altitude from current GPS if available
+"""
+
+from typing import List, Tuple, Optional
+import math
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float64MultiArray, Int32
+from sensor_msgs.msg import NavSatFix
+
+LatLon = Tuple[float, float]
+Poly = List[LatLon]
+
+
+class CorridorWaypointPublisher(Node):
+    def __init__(self):
+        super().__init__('corridor_waypoint_publisher')
+
+        # -------- Parameters --------
+        self.declare_parameter('input_topic', 'region_polygons')
+        self.declare_parameter('mode_topic', 'sequence_mode')
+        self.declare_parameter('gps_input_topic', '/fix')
+        self.declare_parameter('waypoint_topic', '/waypoint_target')
+        self.declare_parameter('inside_offset_m', 5.0)
+        self.declare_parameter('reach_radius_m', 2.0)
+        self.declare_parameter('stable_checks', 10)
+        self.declare_parameter('check_rate_hz', 10.0)
+        self.declare_parameter('publish_rate_hz', 2.0)
+        self.declare_parameter('target_alt_m', 30.0)
+        self.declare_parameter('use_current_alt', True)
+
+        self.input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
+        self.mode_topic = self.get_parameter('mode_topic').get_parameter_value().string_value
+        self.gps_input_topic = self.get_parameter('gps_input_topic').get_parameter_value().string_value
+        self.waypoint_topic = self.get_parameter('waypoint_topic').get_parameter_value().string_value
+        self.inside_offset_m = self.get_parameter('inside_offset_m').get_parameter_value().double_value
+        self.reach_radius_m = self.get_parameter('reach_radius_m').get_parameter_value().double_value
+        self.stable_checks = int(self.get_parameter('stable_checks').get_parameter_value().integer_value)
+        self.check_rate_hz = self.get_parameter('check_rate_hz').get_parameter_value().double_value
+        self.publish_rate_hz = self.get_parameter('publish_rate_hz').get_parameter_value().double_value
+        self.target_alt_m = self.get_parameter('target_alt_m').get_parameter_value().double_value
+        self.use_current_alt = self.get_parameter('use_current_alt').get_parameter_value().bool_value
+
+        # -------- State --------
+        self.current_gps: Optional[NavSatFix] = None
+        self.latest_polygons: Optional[Tuple[Poly, Poly, Poly]] = None
+        self.base_points: Optional[List[LatLon]] = None   # P1..P5 (lat,lon), order-independent
+        self.mode_flag: Optional[int] = None              # 0 normal, 1 reverse, None until received
+
+        self.waypoints: List[Tuple[float, float, float]] = []  # (lat, lon, alt)
+        self.wp_idx: int = -1
+        self.reached_counter: int = 0
+        self.mission_active: bool = False
+
+        # -------- ROS I/O --------
+        self.sub_polys = self.create_subscription(Float64MultiArray, self.input_topic, self.polygons_callback, 10)
+        self.sub_mode  = self.create_subscription(Int32, self.mode_topic, self.mode_callback, 10)
+        self.sub_gps   = self.create_subscription(NavSatFix, self.gps_input_topic, self.gps_callback, 10)
+        self.pub_wp    = self.create_publisher(NavSatFix, self.waypoint_topic, 10)
+
+        # Timers
+        self.progress_timer = self.create_timer(1.0 / self.check_rate_hz, self.progress_check)
+        self.stream_timer   = self.create_timer(1.0 / self.publish_rate_hz, self.stream_current_waypoint)
+
+        self.get_logger().info(
+            f"Waiting for polygons on '{self.input_topic}' and a mode command on '{self.mode_topic}'. "
+            f"Publishing targets to '{self.waypoint_topic}', reading GPS from '{self.gps_input_topic}'."
+        )
+
+    # ----------------- Subscriptions -----------------
+    def gps_callback(self, msg: NavSatFix):
+        self.current_gps = msg
+
+    def polygons_callback(self, msg: Float64MultiArray):
+        try:
+            geofence, corridor, landing = self.unpack_polygons(msg.data)
+        except ValueError as e:
+            self.get_logger().error(f"Polygon parse error: {e}")
+            return
+
+        self.latest_polygons = (geofence, corridor, landing)
+        self.base_points = self.compute_base_points(geofence, corridor, landing)
+        self.get_logger().info("Polygons updated and base points computed.")
+        # Do not start mission here; start only upon mode command.
+
+    def mode_callback(self, msg: Int32):
+        self.mode_flag = 1 if int(msg.data) == 1 else 0
+        self.get_logger().info(f"Mode command received: {self.mode_flag} "
+                               f"({'reverse' if self.mode_flag==1 else 'normal'}).")
+        self.try_start_mission()
+
+    # ----------------- Mission control -----------------
+    def try_start_mission(self):
+        if self.base_points is None or self.latest_polygons is None:
+            self.get_logger().warn("Mode received but polygons not available yet. Waiting for polygons.")
+            return
+        if self.mode_flag is None:
+            self.get_logger().warn("Polygons ready but no mode command yet. Waiting for 0/1 on mode.")
+            return
+
+        points = list(self.base_points)
+        if self.mode_flag == 1:
+            points.reverse()
+
+        alt = float(self.current_gps.altitude) if (self.use_current_alt and self.current_gps) else float(self.target_alt_m)
+        self.waypoints = [(lat, lon, alt) for (lat, lon) in points]
+
+        self.wp_idx = 0
+        self.reached_counter = 0
+        self.mission_active = True
+
+        self.get_logger().info(
+            "Mission STARTED with waypoints:\n" +
+            "\n".join([f"{i+1}: ({lat:.7f}, {lon:.7f}, {alt:.1f})"
+                       for i, (lat, lon, alt) in enumerate(self.waypoints)])
+        )
+
+    def stream_current_waypoint(self):
+        """Re-publish the current target at a steady rate (helps downstream consumers)."""
+        if not self.mission_active or not (0 <= self.wp_idx < len(self.waypoints)):
+            return
+        lat, lon, alt = self.waypoints[self.wp_idx]
+        self.publish_navsatfix(lat, lon, alt)
+
+    def progress_check(self):
+        """Advance when stably within reach_radius_m of current waypoint."""
+        if not self.mission_active or self.current_gps is None:
+            return
+        if not (0 <= self.wp_idx < len(self.waypoints)):
+            return
+
+        tgt_lat, tgt_lon, _ = self.waypoints[self.wp_idx]
+        cur_lat = float(self.current_gps.latitude)
+        cur_lon = float(self.current_gps.longitude)
+
+        dist_m = self.haversine_m(cur_lat, cur_lon, tgt_lat, tgt_lon)
+        if dist_m <= self.reach_radius_m:
+            self.reached_counter += 1
+        else:
+            self.reached_counter = 0
+
+        if self.reached_counter >= self.stable_checks:
+            self.get_logger().info(f"Reached WP {self.wp_idx+1} (d≈{dist_m:.2f} m). Advancing.")
+            self.wp_idx += 1
+            self.reached_counter = 0
+            if self.wp_idx >= len(self.waypoints):
+                self.get_logger().info("Mission complete. All waypoints reached.")
+                self.mission_active = False
+
+    # ----------------- Compute base points (P1..P5) -----------------
+    def compute_base_points(self, geofence: Poly, corridor: Poly, landing: Poly) -> List[LatLon]:
+        c_geo = self.polygon_centroid(geofence)
+        c_cor = self.polygon_centroid(corridor)
+        c_lzn = self.polygon_centroid(landing)
+
+        mids = self.edge_midpoints(corridor)
+        entry_idx = self.midpoint_closest_to(mids, c_geo)
+        exit_idx  = self.midpoint_closest_to(mids, c_lzn)
+        entry_mid = mids[entry_idx]
+        exit_mid  = mids[exit_idx]
+
+        a_entry = corridor[entry_idx]
+        b_entry = corridor[(entry_idx + 1) % 4]
+
+        # P1: offset into geofence along normal of the entry edge
+        u_n, u_e = self.edge_normal_toward_point(a_entry, b_entry, entry_mid, c_geo)
+        dlat, dlon = self.m_to_deg(entry_mid[0], u_n * self.inside_offset_m, u_e * self.inside_offset_m)
+        p1 = (entry_mid[0] + dlat, entry_mid[1] + dlon)
+
+        p2 = entry_mid
+        p3 = c_cor
+        p4 = exit_mid
+        p5 = c_lzn
+
+        return [p1, p2, p3, p4, p5]
+
+    # ----------------- Messages -----------------
+    def publish_navsatfix(self, lat: float, lon: float, alt: float):
+        msg = NavSatFix()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.latitude = float(lat)
+        msg.longitude = float(lon)
+        msg.altitude = float(alt)
+        self.pub_wp.publish(msg)
+
+    # ----------------- Math helpers -----------------
+    @staticmethod
+    def haversine_m(lat1, lon1, lat2, lon2) -> float:
+        R = 6371000.0
+        p1 = math.radians(lat1)
+        p2 = math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlmb = math.radians(lon2 - lon1)
+        a = math.sin(dphi/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dlmb/2)**2
+        return 2 * R * math.asin(math.sqrt(a))
+
+    @staticmethod
+    def polygon_centroid(poly: Poly) -> LatLon:
+        xs = [p[1] for p in poly]  # lon
+        ys = [p[0] for p in poly]  # lat
+        n = len(poly)
+        A = Cx = Cy = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            cross = xs[i] * ys[j] - xs[j] * ys[i]
+            A += cross
+            Cx += (xs[i] + xs[j]) * cross
+            Cy += (ys[i] + ys[j]) * cross
+        A *= 0.5
+        if abs(A) < 1e-12:
+            return (sum(ys)/n, sum(xs)/n)
+        Cx /= (6.0 * A)
+        Cy /= (6.0 * A)
+        return (Cy, Cx)
+
+    @staticmethod
+    def edge_midpoints(poly: Poly) -> List[LatLon]:
+        mids = []
+        n = len(poly)
+        for i in range(n):
+            a = poly[i]
+            b = poly[(i + 1) % n]
+            mids.append(((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0))
+        return mids
+
+    @staticmethod
+    def meters_per_deg(lat_deg: float) -> Tuple[float, float]:
+        lat_rad = math.radians(lat_deg)
+        m_per_deg_lat = 111320.0
+        m_per_deg_lon = 111320.0 * max(1e-9, math.cos(lat_rad))
+        return m_per_deg_lat, m_per_deg_lon
+
+    @staticmethod
+    def deg_diff_to_m(ref_lat: float, dlat_deg: float, dlon_deg: float) -> Tuple[float, float]:
+        m_per_deg_lat, m_per_deg_lon = CorridorWaypointPublisher.meters_per_deg(ref_lat)
+        return dlat_deg * m_per_deg_lat, dlon_deg * m_per_deg_lon
+
+    @staticmethod
+    def m_to_deg(ref_lat: float, north_m: float, east_m: float) -> Tuple[float, float]:
+        m_per_deg_lat, m_per_deg_lon = CorridorWaypointPublisher.meters_per_deg(ref_lat)
+        return north_m / m_per_deg_lat, east_m / m_per_deg_lon
+
+    def midpoint_closest_to(self, mids: List[LatLon], target: LatLon) -> int:
+        ref_lat = target[0]
+        best_idx, best_d2 = 0, float('inf')
+        for i, m in enumerate(mids):
+            dn, de = self.deg_diff_to_m(ref_lat, m[0] - target[0], m[1] - target[1])
+            d2 = dn*dn + de*de
+            if d2 < best_d2:
+                best_idx, best_d2 = i, d2
+        return best_idx
+
+    def edge_normal_toward_point(self, a: LatLon, b: LatLon, mid: LatLon, target: LatLon) -> Tuple[float, float]:
+        ref_lat = mid[0]
+        dn_edge, de_edge = self.deg_diff_to_m(ref_lat, b[0]-a[0], b[1]-a[1])
+        n1 = (-de_edge, dn_edge)
+        n2 = (de_edge, -dn_edge)
+        dn_t, de_t = self.deg_diff_to_m(ref_lat, target[0]-mid[0], target[1]-mid[1])
+        n = n1 if (n1[0]*dn_t + n1[1]*de_t) >= 0.0 else n2
+        L = math.hypot(n[0], n[1])
+        return (1.0, 0.0) if L < 1e-9 else (n[0]/L, n[1]/L)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = CorridorWaypointPublisher()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
