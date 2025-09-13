@@ -42,18 +42,6 @@ int main(int argc, char *argv[]){
 	printf("Starting CaptureImage example...\n");
 	signal(SIGINT,quit_handler);
 
-	// Print camera mode constants for debugging
-	printf("=== Camera Mode Constants ===\n");
-	printf("CAMERA_MODE_VIDEO = %d\n", CAMERA_MODE_VIDEO);
-	printf("CAMERA_MODE_IMAGE = %d\n", CAMERA_MODE_IMAGE);
-	printf("=== Record Source Constants ===\n");
-	printf("PAYLOAD_CAMERA_RECORD_EO = %d\n", PAYLOAD_CAMERA_RECORD_EO);
-	printf("PAYLOAD_CAMERA_RECORD_IR = %d\n", PAYLOAD_CAMERA_RECORD_IR);
-	// If other modes exist, print them too (uncomment as needed)
-	// printf("PAYLOAD_CAMERA_RECORD_EOIR = %d\n", PAYLOAD_CAMERA_RECORD_EOIR);
-	// printf("PAYLOAD_CAMERA_RECORD_IREO = %d\n", PAYLOAD_CAMERA_RECORD_IREO);
-	printf("=============================\n");
-
 	// create payloadsdk object
 	my_payload = new PayloadSdkInterface(s_conn);
 
@@ -68,20 +56,9 @@ int main(int argc, char *argv[]){
 	my_payload->checkPayloadConnection();
 	
 	// set payload to video mode for testing
-	printf("Setting camera mode to VIDEO (value: %d)\n", CAMERA_MODE_VIDEO);
 	my_payload->setPayloadCameraMode(CAMERA_MODE_VIDEO);
-	
-	printf("Setting record source to EO (value: %d)\n", PAYLOAD_CAMERA_RECORD_EO);
 	my_payload->setPayloadCameraParam(PAYLOAD_CAMERA_RECORD_SRC, PAYLOAD_CAMERA_RECORD_EO, PARAM_TYPE_UINT32);
 
-	// Query available camera modes
-	printf("Querying available camera modes...\n");
-	my_payload->getPayloadCameraMode();
-	
-	// Query available record sources
-	printf("Checking current record source...\n");
-	// my_payload->getPayloadCameraParam(PAYLOAD_CAMERA_RECORD_SRC);
-	my_payload->getPayloadCameraMode();
 	my_capture = check_storage;
 	while(1){
 		// to caputre image with payload, follow this sequence
@@ -99,12 +76,10 @@ int main(int argc, char *argv[]){
 			break;
 		}
 		case check_camera_mode:{
-			printf("Checking current camera mode...\n");
 			my_payload->getPayloadCameraMode();
 			break;
 		}
 		case change_camera_mode:{
-			printf("Changing to IMAGE mode (value: %d)...\n", CAMERA_MODE_IMAGE);
 			my_payload->setPayloadCameraMode(CAMERA_MODE_IMAGE);
 			my_capture = check_camera_mode;
 			break;
@@ -142,8 +117,7 @@ void quit_handler( int sig ){
 }
 
 void onPayloadStatusChanged(int event, double* param){
-	printf("Event received: %d\n", event);
-	
+	// printf("%s %d \n", __func__, event);
 	switch(event){
 	case PAYLOAD_CAM_CAPTURE_STATUS:{
 		// param[0]: image_status
@@ -207,17 +181,7 @@ void onPayloadStatusChanged(int event, double* param){
 		// param[1]: zoomLevel
 		// param[2]: focusLevel
 		if(my_capture == check_camera_mode){
-			printf("Got camera mode: %.2f (raw value)\n", param[0]);
-			printf("Mode details: Mode ID: %.2f, Zoom Level: %.2f, Focus Level: %.2f\n", 
-			       param[0], param[1], param[2]);
-			
-			// Map mode value to name for readability
-			if(param[0] == CAMERA_MODE_IMAGE)
-				printf("Current mode is: IMAGE MODE\n");
-			else if(param[0] == CAMERA_MODE_VIDEO)
-				printf("Current mode is: VIDEO MODE\n");
-			else
-				printf("Current mode is: UNKNOWN MODE (%.2f)\n", param[0]);
+			printf("Got camera mode: %.2f \n", param[0]);
 
 			if(param[0] == CAMERA_MODE_IMAGE){
 				my_capture = do_capture;
@@ -229,9 +193,6 @@ void onPayloadStatusChanged(int event, double* param){
 		}
 		break;
 	}
-	default: 
-		printf("Unhandled event type: %d with values: %.2f, %.2f, %.2f, %.2f\n",
-		      event, param[0], param[1], param[2], param[3]);
-		break;
+	default: break;
 	}
 }

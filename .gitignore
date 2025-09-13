@@ -264,3 +264,5 @@ docker/sitl_integration/px
 
 # any text files
 *.txt
+
+airstack/ros_ws/mcap_recordings

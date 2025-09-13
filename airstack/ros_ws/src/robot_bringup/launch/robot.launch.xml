@@ -7,4 +7,14 @@
   <node pkg="domain_bridge" exec="domain_bridge"
     args="/root/ros_ws/src/robot_bringup/params/domain_bridge.yaml"
     output="screen" respawn="true" respawn_delay="1" />
+    
+  <!-- Add burst recorder node -->
+  <node pkg="burst_recorder" exec="burst_recorder_node" output="screen" respawn="true" respawn_delay="2">
+    <param name="rtsp_url" value="rtsp://10.3.1.124:8556/ghadron"/>
+    <param name="mcap_dir" value="/root/ros_ws/mcap_recordings"/>
+    <param name="duration_sec" value="10"/>
+    <param name="fps" value="24"/>
+    <param name="video_width" value="1920"/>
+    <param name="video_height" value="1080"/>
+  </node>
 </launch>
