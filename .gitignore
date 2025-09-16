@@ -264,4 +264,7 @@ docker/sitl_integration/px
 
 # any text files
 *.txt
-operator/foxglove_extensions/click_to_waypoint/package-lock.json
+
+# Node.js
+node_modules/
+
