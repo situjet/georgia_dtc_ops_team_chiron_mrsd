@@ -12,3 +12,7 @@ topics:
     to_domain: 0
   camera/image_raw/compressed:
     type: sensor_msgs/msg/CompressedImage
+  /gimbal/teleop:
+    type: geometry_msgs/msg/Vector3
+    from_domain: 70
+    to_domain: 0

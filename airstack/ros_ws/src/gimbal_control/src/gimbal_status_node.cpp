@@ -4,8 +4,7 @@
 
 T_ConnInfo s_conn = {
 	CONTROL_UDP,
-	udp_ip_target,
-	udp_port_target
+	{.udp = {udp_ip_target, udp_port_target}}
 };
 
 class GimbalStatusNode : public rclcpp::Node {

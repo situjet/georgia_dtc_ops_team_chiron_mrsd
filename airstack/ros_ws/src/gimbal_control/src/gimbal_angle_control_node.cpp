@@ -1,4 +1,8 @@
-// Gimbal angle control node for ROS2
+// Gimba// Define connection parameters
+T_ConnInfo s_conn = {
+	CONTROL_UDP,
+	{.udp = {udp_ip_target, udp_port_target}}
+};e control node for ROS2
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/vector3_stamped.hpp"
 #include <csignal>
@@ -38,11 +42,11 @@ public:
 			RCLCPP_INFO(this->get_logger(), "2");
 			my_payload_->checkPayloadConnection();
 			RCLCPP_INFO(this->get_logger(), "3");
-            
 		// Set gimbal to FOLLOW mode (not LOCK mode)
 		my_payload_->setPayloadCameraParam((char*)"GB_MODE", 
 			2, 3);  // 2 = FOLLOW mode, 3 = PARAM_TYPE_UINT32
-		usleep(1000000);  // Wait for mode switch			RCLCPP_INFO(this->get_logger(), "SDK initialized successfully");
+		usleep(1000000);  // Wait for mode switch
+		RCLCPP_INFO(this->get_logger(), "SDK initialized successfully");
 		} catch (...) {
 			RCLCPP_ERROR(this->get_logger(), "Failed to initialize SDK");
 			if (my_payload_ != nullptr) {
