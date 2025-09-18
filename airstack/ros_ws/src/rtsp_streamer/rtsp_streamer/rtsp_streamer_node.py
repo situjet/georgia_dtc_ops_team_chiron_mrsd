@@ -30,6 +30,7 @@ class RtspStreamer(Node):
         self.declare_parameter('rtsp_latency_ms', 200)
         self.declare_parameter('prefer_tcp', True)
         self.declare_parameter('test_mode', False)
+        self.declare_parameter('force_test_mode', False)  # Force test mode for debugging
 
         self.rtsp_url: str = self.get_parameter('rtsp_url').get_parameter_value().string_value
         self.topic: str = self.get_parameter('topic').get_parameter_value().string_value
@@ -54,7 +55,9 @@ class RtspStreamer(Node):
 
         self.cap: Optional['cv2.VideoCapture'] = None
         self.connection_retry_count = 0
-        self.max_retries = 10
+        self.max_retries = 5  # Reduced from 10 to switch to test mode faster
+        self.consecutive_frame_failures = 0
+        self.max_consecutive_failures = 3  # Switch to test mode after 3 consecutive frame failures
 
         # Timer for frame grabbing at target FPS
         self.period = 1.0 / max(self.fps, 0.1)
@@ -73,6 +76,7 @@ class RtspStreamer(Node):
                 self.cap.release()
             except Exception:
                 pass
+            self.cap = None
 
         if self.connection_retry_count >= self.max_retries:
             self.get_logger().error(f'Max RTSP connection retries ({self.max_retries}) exceeded. Switching to test mode.')
@@ -87,21 +91,43 @@ class RtspStreamer(Node):
             url = f"{url}{sep}latency={self.rtsp_latency_ms}"
 
         self.get_logger().info(f"Connecting RTSP: {url} (attempt {self.connection_retry_count + 1}/{self.max_retries})")
-        self.cap = cv2.VideoCapture(url)
-        if not self.cap.isOpened():
+        
+        try:
+            self.cap = cv2.VideoCapture(url)
+            if not self.cap.isOpened():
+                self.connection_retry_count += 1
+                self.get_logger().warning(f'Failed to open RTSP stream, will retry. Attempt {self.connection_retry_count}/{self.max_retries}')
+                self.cap = None
+                return
+
+            # Set desired width/height if provided (>0)
+            if self.width > 0:
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.width))
+            if self.height > 0:
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.height))
+
+            # Test the connection by reading a frame
+            ok, test_frame = self.cap.read()
+            if not ok or test_frame is None:
+                self.connection_retry_count += 1
+                self.get_logger().warning(f'RTSP stream opened but failed to read test frame. Attempt {self.connection_retry_count}/{self.max_retries}')
+                self.cap.release()
+                self.cap = None
+                return
+
+            self.connection_retry_count = 0  # Reset on successful connection
+            self.consecutive_frame_failures = 0  # Reset frame failure counter
+            self.get_logger().info(f'RTSP stream connected successfully. Frame size: {test_frame.shape}')
+            
+        except Exception as e:
             self.connection_retry_count += 1
-            self.get_logger().warning(f'Failed to open RTSP stream, will retry. Attempt {self.connection_retry_count}/{self.max_retries}')
-            self.cap = None
-            return
-
-        # Set desired width/height if provided (>0)
-        if self.width > 0:
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.width))
-        if self.height > 0:
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.height))
-
-        self.connection_retry_count = 0  # Reset on successful connection
-        self.get_logger().info('RTSP stream connected successfully.')
+            self.get_logger().error(f'Exception during RTSP connection: {e}. Attempt {self.connection_retry_count}/{self.max_retries}')
+            if self.cap:
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
+                self.cap = None
 
     def _setup_test_mode(self):
         """Generate synthetic frames for testing when RTSP is unavailable"""
@@ -118,31 +144,45 @@ class RtspStreamer(Node):
             self._connect()
             return
 
-        ok, frame = self.cap.read()
-        if not ok or frame is None:
-            self.get_logger().warning('Frame grab failed; reconnecting...')
-            self._connect()
-            return
+        try:
+            ok, frame = self.cap.read()
+            if not ok or frame is None:
+                self.consecutive_frame_failures += 1
+                self.get_logger().warning(f'Frame grab failed ({self.consecutive_frame_failures}/{self.max_consecutive_failures}); will reconnect or switch to test mode')
+                
+                if self.consecutive_frame_failures >= self.max_consecutive_failures:
+                    self.get_logger().warning(f'Too many consecutive frame failures ({self.consecutive_frame_failures}), switching to test mode')
+                    self._setup_test_mode()
+                else:
+                    self._connect()
+                return
 
-        self._publish_frame(frame)
+            # Reset failure counter on successful frame grab
+            self.consecutive_frame_failures = 0
+            self._publish_frame(frame)
+            
+        except Exception as e:
+            self.get_logger().error(f'Exception during frame processing: {e}')
+            self.consecutive_frame_failures += 1
+            if self.consecutive_frame_failures >= self.max_consecutive_failures:
+                self.get_logger().warning('Too many exceptions, switching to test mode')
+                self._setup_test_mode()
 
     def _generate_test_frame(self):
         """Generate a synthetic frame for testing"""
-        import numpy as np
-        
         # Create a test pattern
         width = self.width or 640
         height = self.height or 360
         
-        # Create gradient background
+        # Create gradient background using vectorized operations for efficiency
         frame = np.zeros((height, width, 3), dtype=np.uint8)
-        for y in range(height):
-            for x in range(width):
-                frame[y, x] = [
-                    int(255 * x / width),  # Red gradient
-                    int(255 * y / height),  # Green gradient
-                    128  # Blue constant
-                ]
+        
+        # Create meshgrid for efficient gradient calculation
+        x_indices, y_indices = np.meshgrid(np.arange(width), np.arange(height))
+        
+        frame[:, :, 0] = (255 * x_indices / width).astype(np.uint8)  # Red gradient
+        frame[:, :, 1] = (255 * y_indices / height).astype(np.uint8)  # Green gradient
+        frame[:, :, 2] = 128  # Blue constant
         
         # Add frame counter text
         self.test_frame_counter += 1
@@ -150,24 +190,41 @@ class RtspStreamer(Node):
         cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         cv2.putText(frame, f"ROS_DOMAIN_ID: {os.environ.get('ROS_DOMAIN_ID', 'unset')}", 
                    (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, f"Topic: {self.topic}", 
+                   (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
         self._publish_frame(frame)
 
     def _publish_frame(self, frame):
         """Encode and publish a frame"""
-        # Encode to JPEG (CompressedImage expects JPEG/PNG)
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(max(1, min(self.jpeg_quality, 100)))]
-        ok, buf = cv2.imencode('.jpg', frame, encode_params)
-        if not ok:
-            self.get_logger().warning('JPEG encode failed for frame')
-            return
+        try:
+            # Encode to JPEG (CompressedImage expects JPEG/PNG)
+            encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(max(1, min(self.jpeg_quality, 100)))]
+            ok, buf = cv2.imencode('.jpg', frame, encode_params)
+            if not ok or buf is None:
+                self.get_logger().warning('JPEG encode failed for frame')
+                return
 
-        msg = CompressedImage()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'camera'
-        msg.format = 'jpeg'
-        msg.data = buf.tobytes()
-        self.publisher.publish(msg)
+            msg = CompressedImage()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = 'camera'
+            msg.format = 'jpeg'
+            msg.data = buf.tobytes()
+            
+            self.publisher.publish(msg)
+            
+            # Log publishing success periodically
+            if hasattr(self, 'frame_count'):
+                self.frame_count += 1
+            else:
+                self.frame_count = 1
+                
+            if self.frame_count % 50 == 0:  # Log every 50 frames (~10 seconds at 5 FPS)
+                mode = "test" if self.test_mode else "RTSP"
+                self.get_logger().info(f'Published {self.frame_count} frames to {self.topic} ({mode} mode)')
+                
+        except Exception as e:
+            self.get_logger().error(f'Exception during frame publishing: {e}')
 
     def destroy_node(self):
         try:
