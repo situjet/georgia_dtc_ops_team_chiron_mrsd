@@ -45,10 +45,11 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): ReactEle
   const mapRef = useRef<LeafletMap | null>(null);
   const droneMarkerRef = useRef<LeafletMarker | null>(null);
   const [hasInternet, setHasInternet] = useState<boolean>(true);
+  const [mapLoaded, setMapLoaded] = useState<boolean>(true); // Default to true to avoid showing loading indefinitely
   const [gps, setGps] = useState<GpsFix>(undefined);
   const [waypointMode, setWaypointMode] = useState<WaypointMode>(false);
-  const [targetLat, setTargetLat] = useState<string>("37.7749");
-  const [targetLon, setTargetLon] = useState<string>("-122.4194");
+  const [targetLat, setTargetLat] = useState<string>("40.4142744");
+  const [targetLon, setTargetLon] = useState<string>("-79.9476238");
   const [status, setStatus] = useState<string>("");
 
   // topic names (assumption, adjust to your system if different)
@@ -130,29 +131,101 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): ReactEle
   useEffect(() => {
     if (mapRef.current) return;
     const el = document.getElementById("map-root");
-    if (!el) return;
+    if (!el) {
+      // If element doesn't exist yet, retry after 100ms
+      const retryTimer = setTimeout(() => {
+        const retryEl = document.getElementById("map-root");
+        if (retryEl && !mapRef.current) {
+          // Trigger re-render
+          setStatus("Initializing map...");
+        }
+      }, 100);
+      return () => clearTimeout(retryTimer);
+    }
 
-  const start: LatLngExpression = [Number(targetLat) || 37.7749, Number(targetLon) || -122.4194];
+  const start: LatLngExpression = [Number(targetLat) || 40.4142744, Number(targetLon) || -79.9476238];
   // Aim for ~30m box: use a high zoom level; refine based on latitude if needed.
-  const initialZoom = 20; // ~ 1.1m per pixel at equator at z=20; typical panels will show <30m box.
-  const map = L.map(el, { center: start, zoom: initialZoom, zoomControl: true, maxZoom: 22 });
+  const initialZoom = 18; // OSM native max 19; 18/19 are both safe
+  const map = L.map(el, { center: start, zoom: initialZoom, zoomControl: false, maxZoom: 22 });
     mapRef.current = map;
 
     // Esri World Imagery satellite tiles (public). If offline, tile loads fail; we detect via error.
     // Attribution kept for licensing compliance.
+  // Esri World Imagery satellite tiles (public)
   const url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-  const attribution = "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community";
-  const tile = L.tileLayer(url, { maxZoom: 22, attribution });
-    tile.addTo(map);
+  const attribution = 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+  
+  // 选项3: CartoDB (深色主题，通常没有CORS问题)
+  // const url = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+  // const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  
+  const tile = L.tileLayer(url, {
+    maxZoom: 22,
+    maxNativeZoom: 19, // Key: CSS scaling for >19, avoid requesting non-existent level 20 tiles
+    attribution,
+    errorTileUrl: ''
+  });
+  tile.addTo(map);
+  
+  console.log("Map initialization complete, using tile service:", url);
 
-    tile.on("tileerror", () => {
-      setHasInternet(false);
-      setStatus("Offline: using last cached snapshot if available.");
+    // Immediately set to loading state
+    setMapLoaded(false);
+    setStatus("Loading map tiles...");
+    
+    // Track tile loading
+    let loadedTiles = 0;
+    let errorTiles = 0;
+    let loadTimeout: NodeJS.Timeout;
+    
+    // Set loading timeout
+    loadTimeout = setTimeout(() => {
+      if (loadedTiles === 0) {
+        console.warn("Map loading timeout, attempting to set as loaded");
+        setMapLoaded(true); // Show map framework even without tiles
+        setHasInternet(false);
+        setStatus("Map loading timeout, possible network issue");
+      }
+    }, 3000);
+    
+    // Listen for tile errors
+    tile.on("tileerror", (e: any) => {
+      errorTiles++;
+      console.error("Tile loading error:", e);
+      
+      // If multiple consecutive errors
+      if (errorTiles > 3 && loadedTiles === 0) {
+        clearTimeout(loadTimeout);
+        setHasInternet(false);
+        setMapLoaded(true); // Show map framework even on failure
+        setStatus("Unable to load map tiles (CORS or network issue)");
+      }
     });
-    tile.on("load", () => {
-      setHasInternet(true);
-      setStatus("");
+    
+    // Listen for successful tile loading
+    tile.on("tileload", () => {
+      loadedTiles++;
+      console.log(`Tile loaded successfully: ${loadedTiles}`);
+      
+      if (loadedTiles === 1) {
+        // First tile loaded successfully
+        clearTimeout(loadTimeout);
+        setHasInternet(true);
+        setMapLoaded(true);
+        setStatus("");
+      }
     });
+    
+    // Try to trigger map rendering immediately
+    setTimeout(() => {
+      map.invalidateSize();
+      // Force show map if no tiles loaded after 3 seconds
+      if (loadedTiles === 0 && errorTiles === 0) {
+        console.log("Force showing map framework");
+        setMapLoaded(true);
+        setStatus("Map framework loaded (tiles may appear later)");
+      }
+    }, 1000);
 
     // Click handler to set waypoint when in waypoint mode
     map.on("click", (e: any) => {
@@ -170,11 +243,24 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): ReactEle
       );
     });
 
+    // Ensure map container size is correct
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+    
+    // Listen for container size changes
+    const resizeObserver = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    resizeObserver.observe(el);
+
     return () => {
+      clearTimeout(loadTimeout);
+      resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
     };
-  }, [context, targetLat, targetLon, waypointMode]);
+  }, [context]); // Initialize only once, avoid setStatus triggering map.remove() -> rebuild -> tile interruption
 
   // Update drone marker and pan
   useEffect(() => {
@@ -226,9 +312,50 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): ReactEle
     const lon = Number(targetLon);
     if (Number.isFinite(lat) && Number.isFinite(lon) && mapRef.current) {
       mapRef.current.setView([lat, lon], 20);
-      setStatus("Panned to target.");
+      setStatus("Located to target position");
     } else {
-      setStatus("Invalid target lat/lon.");
+      setStatus("Invalid latitude/longitude");
+    }
+  };
+  
+  // Manually refresh map
+  const refreshMap = () => {
+    if (mapRef.current) {
+      mapRef.current.invalidateSize();
+      // Force reload visible tiles
+      mapRef.current.eachLayer((layer: any) => {
+        if (layer._tiles) {
+          layer.redraw();
+        }
+      });
+      setStatus("Map refreshed");
+      setTimeout(() => setStatus(""), 2000);
+    }
+  };
+  
+  // Test map functionality
+  const testMap = () => {
+    if (mapRef.current) {
+      const center = mapRef.current.getCenter();
+      // Add a test marker at map center
+      L.marker([center.lat, center.lng])
+        .addTo(mapRef.current)
+        .bindPopup("Test marker")
+        .openPopup();
+      setStatus(`Test marker added at: ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}`);
+    }
+  };
+
+  // Zoom functions
+  const zoomIn = () => {
+    if (mapRef.current) {
+      mapRef.current.zoomIn();
+    }
+  };
+
+  const zoomOut = () => {
+    if (mapRef.current) {
+      mapRef.current.zoomOut();
     }
   };
 
@@ -242,20 +369,92 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): ReactEle
         <span style={{ marginLeft: 8, fontSize: 12, color: hasInternet ? "#666" : "#a94442" }}>
           {hasInternet ? "Online" : "Offline"}
         </span>
+        <span style={{ marginLeft: 8, fontSize: 12, color: mapLoaded ? "#14866d" : "#f39c12" }}>
+          {mapLoaded ? "Map loaded" : "Map loading..."}
+        </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <input style={{ width: 120 }} placeholder="lat" value={targetLat} onChange={(e) => setTargetLat(e.target.value)} />
           <input style={{ width: 120 }} placeholder="lon" value={targetLon} onChange={(e) => setTargetLon(e.target.value)} />
-          <button onClick={goToTarget}>Go</button>
-          <button onClick={takeSnapshot}>Cache snapshot</button>
+          <button onClick={goToTarget}>Locate</button>
+          <button onClick={refreshMap}>Refresh</button>
+          <button onClick={testMap}>Test</button>
+          <button onClick={takeSnapshot}>Cache</button>
         </div>
       </div>
       {status && <div style={{ fontSize: 12, color: "#666" }}>{status}</div>}
-      <div id="map-root" style={{ flex: 1, minHeight: 300, border: "1px solid #ddd", borderRadius: 4 }} />
+      <div id="map-root" style={{ 
+        flex: 1, 
+        minHeight: 300, 
+        border: "1px solid #ddd", 
+        borderRadius: 4,
+        position: "relative"
+      }}>
+        {/* Transparent zoom buttons */}
+        <div style={{
+          position: "absolute",
+          top: 10,
+          left: 10,
+          zIndex: 1000,
+          display: "flex",
+          flexDirection: "column",
+          gap: 2
+        }}>
+          <button
+            onClick={zoomIn}
+            style={{
+              width: 30,
+              height: 30,
+              backgroundColor: "rgba(255, 255, 255, 0.8)",
+              border: "1px solid rgba(0, 0, 0, 0.2)",
+              borderRadius: 4,
+              cursor: "pointer",
+              fontSize: 18,
+              fontWeight: "bold",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
+              transition: "background-color 0.2s"
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.9)"}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.8)"}
+            title="Zoom in"
+          >
+            +
+          </button>
+          <button
+            onClick={zoomOut}
+            style={{
+              width: 30,
+              height: 30,
+              backgroundColor: "rgba(255, 255, 255, 0.8)",
+              border: "1px solid rgba(0, 0, 0, 0.2)",
+              borderRadius: 4,
+              cursor: "pointer",
+              fontSize: 18,
+              fontWeight: "bold",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
+              transition: "background-color 0.2s"
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.9)"}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.8)"}
+            title="Zoom out"
+          >
+            −
+          </button>
+        </div>
+      </div>
       <div style={{ display: "flex", gap: 12, fontSize: 12 }}>
         <div>
           UAV: {gps ? `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}` : "—"}
         </div>
-        <div>Tiles: Esri World Imagery</div>
+        <div>Tile service: Esri World Imagery</div>
+        <div style={{ color: mapLoaded ? "#14866d" : "#f39c12" }}>
+          Status: {mapLoaded ? "Normal" : hasInternet ? "Loading" : "Offline"}
+        </div>
       </div>
     </div>
   );
