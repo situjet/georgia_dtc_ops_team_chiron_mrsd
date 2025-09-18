@@ -124,6 +124,10 @@ RUN apt-get update && apt-get install -y \
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 RUN echo 'export PATH=$PATH:/opt/ros/humble/bin' >> ~/.bashrc
 
+# Set default ROS_DOMAIN_ID to 70
+ENV ROS_DOMAIN_ID=70
+RUN echo 'export ROS_DOMAIN_ID=70' >> ~/.bashrc
+
 
 # Copy ROS2 workspace
 COPY ../ros_ws /root/ros_ws
