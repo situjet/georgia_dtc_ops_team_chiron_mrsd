@@ -11,7 +11,6 @@
 
 #include "stdio.h"
 #include"payloadSdkInterface.h"
-#include "payload-define/ghadron_sdk.h"  // 确保这个头文件被正确包含
 
 #include <iostream>
 #include <cstdlib> // for rand() and srand()

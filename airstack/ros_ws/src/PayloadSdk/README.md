@@ -38,6 +38,5 @@ cmake -D<b>payload</b> ../
 <i>     cmake -DGHADRON=1 ../</i>
 <i>     cmake -DZIO=1 ../</i>
 
-make -j6
-
+iokd
 </pre>

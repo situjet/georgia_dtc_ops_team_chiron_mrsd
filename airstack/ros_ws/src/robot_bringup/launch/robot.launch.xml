@@ -7,4 +7,29 @@
   <node pkg="domain_bridge" exec="domain_bridge"
     args="/root/ros_ws/src/robot_bringup/params/domain_bridge.yaml"
     output="screen" respawn="true" respawn_delay="1" />
+    
+  <!-- Gimbal control node for teleop and PayloadSDK integration -->
+  <node pkg="gimbal_control" exec="gimbal_angle_control_node" output="screen" respawn="true" respawn_delay="2" />
+    
+  <!-- Low-latency operator preview stream (compressed ~5 fps) -->
+  <node pkg="rtsp_streamer" exec="rtsp_streamer_node" output="screen" respawn="true" respawn_delay="2">
+    <param name="rtsp_url" value="rtsp://10.3.1.124:8556/ghadron"/>
+    <param name="topic" value="/image_raw_compressed"/>
+    <param name="fps" value="5.0"/>
+    <param name="width" value="640"/>
+    <param name="height" value="360"/>
+    <param name="jpeg_quality" value="50"/>
+    <param name="rtsp_latency_ms" value="200"/>
+    <param name="prefer_tcp" value="true"/>
+  </node>
+
+  <!-- Add burst recorder node -->
+  <node pkg="burst_recorder" exec="burst_recorder_node" output="screen" respawn="true" respawn_delay="2">
+    <param name="rtsp_url" value="rtsp://10.3.1.124:8556/ghadron"/>
+    <param name="mcap_dir" value="/root/ros_ws/mcap_recordings"/>
+    <param name="duration_sec" value="10"/>
+    <param name="fps" value="24"/>
+    <param name="video_width" value="1920"/>
+    <param name="video_height" value="1080"/>
+  </node>
 </launch>

@@ -212,19 +212,13 @@ void *start_loop_thread(void *threadid)
 	// gst_init(&argc, &argv);
     gst_init(NULL, NULL);
 
-    string descr;
-    if(!_is_rtsp_stream){
-	    descr = "udpsrc port=" + _stream_uri + " ! application/x-rtp,encoding-name=H264,payload=96 ! rtph264depay ! h264parse ! queue ! avdec_h264 ! nvvidconv ! nvoverlaysink sync=false async=false"
-	                    ;
-    }else{
-    	descr = "rtspsrc location=" + _stream_uri + " latency=0 ! rtph264depay ! h264parse ! avdec_h264 ! autovideosink sync=false async=false";
-    }
+    std::string descr = "rtspsrc location=rtsp://10.3.1.124:8556/ghadron latency=0 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink";
 
     printf("%s %s \n", __func__, descr.c_str());
     main_pipeline = gst_parse_launch(descr.c_str(), &error);
 
-    if(error) {
-        g_print("could not construct pipeline: %s\n", error->message);
+    if (error) {
+        g_print("Could not construct pipeline: %s\n", error->message);
         g_error_free(error);
         exit(-1);
     }
@@ -234,7 +228,7 @@ void *start_loop_thread(void *threadid)
 
     gst_element_set_state(GST_ELEMENT(main_pipeline), GST_STATE_PLAYING);
 
-    printf("gstreamer init done\n");
+    printf("GStreamer init done\n");
 
     g_main_loop_run(loop);
 

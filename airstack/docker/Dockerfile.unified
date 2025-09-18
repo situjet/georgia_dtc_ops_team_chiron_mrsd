@@ -113,6 +113,13 @@ RUN wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/
     ./install_geographiclib_datasets.sh && \
     rm install_geographiclib_datasets.sh
 
+# Install GStreamer development packages for PayloadSDK
+RUN apt-get update && apt-get install -y \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set up ROS environment
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 RUN echo 'export PATH=$PATH:/opt/ros/humble/bin' >> ~/.bashrc
