@@ -1,0 +1,70 @@
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.serialization import serialize_message
+
+from std_msgs.msg import Header, UInt8MultiArray
+from sensor_msgs.msg import Image, NavSatFix
+from dtc_network_msgs.msg import HumanDataMsg
+
+def sensor_qos():
+    return QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                      history=HistoryPolicy.KEEP_LAST, depth=10)
+
+class HumanDataTX(Node):
+    """
+    Drone-side node:
+    - Subscribes: /camera/image_raw (Image), /navsatfix5 (NavSatFix)
+    - Builds HumanDataMsg (raw_images only)
+    - Serializes to bytes and publishes on /dtc/radio/tx (UInt8MultiArray)
+    """
+    def __init__(self):
+        super().__init__("human_data_tx")
+        self.declare_parameter("system_name", "uav1")
+        self.declare_parameter("tx_topic", "/dtc/radio/tx")
+        self.system_name = self.get_parameter("system_name").get_parameter_value().string_value
+        self.tx_topic = self.get_parameter("tx_topic").get_parameter_value().string_value
+
+        # Pub: serialized payload for the radio
+        self.pub_bytes = self.create_publisher(UInt8MultiArray, self.tx_topic, sensor_qos())
+
+        # State
+        self.last_gps: NavSatFix | None = None
+
+        # Subs
+        self.create_subscription(NavSatFix, "/navsatfix5", self._gps_cb, 10)
+        self.create_subscription(Image, "/camera/image_raw", self._image_cb, sensor_qos())
+
+        self.get_logger().info(f"TX ready. system={self.system_name} -> bytes on {self.tx_topic}")
+
+    def _gps_cb(self, msg: NavSatFix):
+        self.last_gps = msg
+
+    def _image_cb(self, img: Image):
+        # Need GPS to build HumanDataMsg
+        if self.last_gps is None:
+            return
+
+        now = self.get_clock().now().to_msg()
+        hd = HumanDataMsg()
+        hd.header = Header(stamp=now, frame_id=img.header.frame_id or "camera_optical_frame")
+        hd.stamp = now
+        hd.system = self.system_name
+        hd.gps_data = self.last_gps
+        hd.raw_images = [img]         # use raw images only
+        hd.compressed_images = []     # leave empty
+
+        # Serialize to bytes and publish
+        blob = serialize_message(hd)
+        out = UInt8MultiArray(data=list(blob))
+        self.pub_bytes.publish(out)
+
+def main():
+    rclpy.init()
+    node = HumanDataTX()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()

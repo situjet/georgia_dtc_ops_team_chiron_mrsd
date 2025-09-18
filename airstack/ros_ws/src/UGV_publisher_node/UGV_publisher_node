@@ -1,0 +1,48 @@
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.serialization import deserialize_message
+
+from std_msgs.msg import UInt8MultiArray
+from dtc_network_msgs.msg import HumanDataMsg
+
+def sensor_qos():
+    return QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                      history=HistoryPolicy.KEEP_LAST, depth=10)
+
+class HumanDataRX(Node):
+    """
+    Ground-side node:
+    - Subscribes: /dtc/radio/tx (UInt8MultiArray of serialized HumanDataMsg)
+    - Deserializes into HumanDataMsg
+    - Publishes: /uav1/blusdr/human_data (HumanDataMsg)
+    """
+    def __init__(self):
+        super().__init__("human_data_rx")
+        self.declare_parameter("rx_topic", "/dtc/radio/tx")             # match TX
+        self.declare_parameter("out_topic", "/uav1/blusdr/human_data")   # canonical topic
+
+        self.rx_topic = self.get_parameter("rx_topic").get_parameter_value().string_value
+        self.out_topic = self.get_parameter("out_topic").get_parameter_value().string_value
+
+        self.pub_human = self.create_publisher(HumanDataMsg, self.out_topic, sensor_qos())
+        self.create_subscription(UInt8MultiArray, self.rx_topic, self._bytes_cb, sensor_qos())
+
+        self.get_logger().info(f"RX listening on {self.rx_topic} → republishes {self.out_topic}")
+
+    def _bytes_cb(self, msg: UInt8MultiArray):
+        try:
+            hd = deserialize_message(bytes(msg.data), HumanDataMsg)
+            self.pub_human.publish(hd)
+        except Exception as e:
+            self.get_logger().warn(f"Failed to deserialize HumanDataMsg: {e}")
+
+def main():
+    rclpy.init()
+    node = HumanDataRX()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
