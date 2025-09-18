@@ -18,10 +18,15 @@ public:
 	{
 		RCLCPP_INFO(this->get_logger(), "Gimbal angle control node started");
         
-		// Create subscriber for angle commands
+		// Create subscriber for angle commands (local)
 		angle_subscriber_ = this->create_subscription<geometry_msgs::msg::Vector3>(
 			"gimbal_angles", 10,
 			std::bind(&GimbalAngleControlNode::angle_callback, this, std::placeholders::_1));
+
+		// Create subscriber for teleop commands from operator (domain 70)
+		teleop_subscriber_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+			"/gimbal/teleop", 10,
+			std::bind(&GimbalAngleControlNode::teleop_callback, this, std::placeholders::_1));
 
 		// Initialize SDK
 		try {
@@ -47,7 +52,7 @@ public:
 		}
 
 		RCLCPP_INFO(this->get_logger(), "Node is ready to receive angle commands");
-		RCLCPP_INFO(this->get_logger(), "Using topic: /gimbal_angles");
+		RCLCPP_INFO(this->get_logger(), "Using topics: /gimbal_angles and /gimbal/teleop");
 
 		// Create publisher for current angles
 		auto qos = rclcpp::QoS(10).transient_local();
@@ -97,7 +102,19 @@ private:
 	void angle_callback(const geometry_msgs::msg::Vector3::SharedPtr msg)
 	{
 		RCLCPP_DEBUG(this->get_logger(), "In angle callback");
+		set_gimbal_angle(msg->x, msg->y, msg->z);
+	}
 
+	void teleop_callback(const geometry_msgs::msg::Vector3::SharedPtr msg)
+	{
+		RCLCPP_DEBUG(this->get_logger(), "In teleop callback from operator");
+		// Convert teleop commands (rate commands) to gimbal control
+		// Teleop typically sends rate commands, so we use INPUT_ANGULAR_RATE mode
+		set_gimbal_angle(msg->x, msg->y, msg->z, true); // true indicates rate mode
+	}
+
+	void set_gimbal_angle(float pitch, float yaw, float roll, bool is_rate_mode = false)
+	{
 		if (my_payload_ == nullptr) {
 			RCLCPP_ERROR(this->get_logger(), "Gimbal not connected (my_payload_ is null)");
 			return;
@@ -105,8 +122,14 @@ private:
 
 		try {
 			RCLCPP_DEBUG(this->get_logger(), "Trying to set gimbal angle...");
-			my_payload_->setGimbalSpeed(msg->x, msg->y, msg->z, Gimbal_Protocol::INPUT_ANGLE);
-			usleep(500000);
+			if (is_rate_mode) {
+				// For teleop rate commands
+				my_payload_->setGimbalSpeed(pitch, roll, yaw, Gimbal_Protocol::INPUT_ANGULAR_RATE);
+			} else {
+				// For absolute angle commands
+				my_payload_->setGimbalSpeed(pitch, roll, yaw, Gimbal_Protocol::INPUT_ANGLE);
+			}
+			usleep(50000); // Reduce sleep time for better responsiveness
 		} catch (const std::exception& e) {
 			RCLCPP_ERROR(this->get_logger(), "Failed to set gimbal angle: %s", e.what());
 		} catch (...) {
@@ -115,6 +138,7 @@ private:
 	}
 
 	rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr angle_subscriber_;
+	rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr teleop_subscriber_;
 	PayloadSdkInterface* my_payload_{nullptr};
 	rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_angles_publisher_;
 	rclcpp::TimerBase::SharedPtr timer_;

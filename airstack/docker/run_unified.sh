@@ -88,14 +88,14 @@ docker run -d \
 	bash --noprofile --norc -lc "set -e; \
 		service ssh restart; \
 		source /opt/ros/humble/setup.bash; \
-		if [ ! -f /root/ros_ws/install/share/robot_bringup/package.xml ]; then \
-			echo 'Rebuilding workspace (robot_bringup not installed or merge-install missing)...'; \
+		if [ ! -f /root/ros_ws/install/share/robot_bringup/package.xml ] || [ ! -f /root/ros_ws/install/share/rtsp_streamer/package.xml ] || [ ! -x /root/ros_ws/install/lib/rtsp_streamer/rtsp_streamer_node ]; then \
+			echo 'Rebuilding workspace (bringup/rtsp_streamer not installed or console script missing)...'; \
 			cd /root/ros_ws && rm -rf build install log && colcon build --symlink-install --merge-install; \
 		fi; \
 		unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH; \
 		source /root/ros_ws/install/setup.bash; \
 		env | egrep 'AMENT_PREFIX_PATH|COLCON_PREFIX_PATH|CMAKE_PREFIX_PATH' || true; \
-		ros2 pkg list | grep robot_bringup; \
+		ros2 pkg list | grep -E 'robot_bringup|rtsp_streamer'; \
 		ros2 launch robot_bringup robot.launch.xml"
 
 echo "Container ${CONTAINER_NAME} started. Attaching logs..."

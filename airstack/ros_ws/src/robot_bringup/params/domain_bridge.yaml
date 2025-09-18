@@ -10,3 +10,5 @@ topics:
     type: std_msgs/msg/String
     from_domain: 1
     to_domain: 0
+  camera/image_raw/compressed:
+    type: sensor_msgs/msg/CompressedImage
