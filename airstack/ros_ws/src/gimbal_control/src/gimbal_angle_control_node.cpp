@@ -1,8 +1,10 @@
-// Copied from old/humanflow/ros2_ghadron_gimbal/src/gimbal_angle_control/src/gimbal_angle_control_node.cpp
+// Gimbal angle control node for ROS2
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/vector3_stamped.hpp"
-#include "payloadSdkInterface.h"
 #include <csignal>
+
+// Use the same header as the working examples
+#include "payloadSdkInterface.h"
 
 // [31mDefine connection parameters[0m
 T_ConnInfo s_conn = {
@@ -37,12 +39,10 @@ public:
 			my_payload_->checkPayloadConnection();
 			RCLCPP_INFO(this->get_logger(), "3");
             
-			// Set gimbal to FOLLOW mode (not LOCK mode)
-			my_payload_->setPayloadCameraParam(PAYLOAD_CAMERA_GIMBAL_MODE, 
-				PAYLOAD_CAMERA_GIMBAL_MODE_FOLLOW, PARAM_TYPE_UINT32);
-			usleep(1000000);  // Wait for mode switch
-                
-			RCLCPP_INFO(this->get_logger(), "SDK initialized successfully");
+		// Set gimbal to FOLLOW mode (not LOCK mode)
+		my_payload_->setPayloadCameraParam((char*)"GB_MODE", 
+			2, 3);  // 2 = FOLLOW mode, 3 = PARAM_TYPE_UINT32
+		usleep(1000000);  // Wait for mode switch			RCLCPP_INFO(this->get_logger(), "SDK initialized successfully");
 		} catch (...) {
 			RCLCPP_ERROR(this->get_logger(), "Failed to initialize SDK");
 			if (my_payload_ != nullptr) {
