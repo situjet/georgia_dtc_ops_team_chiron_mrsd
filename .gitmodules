@@ -1,0 +1,3 @@
+[submodule "airstack/ros_ws/src/straps_msgs"]
+	path = airstack/ros_ws/src/straps_msgs
+	url = git@github.com:strapsai/straps_msgs.git
