@@ -3,7 +3,7 @@
   <name>mavros_interface</name>
   <version>0.0.1</version>
   <description>MAVROS interface for autopilot connection</description>
-  <maintainer email="user@example.com">User</maintainer>
+  <maintainer email="yufanli@andrew.cmu.edu">Yufan Li</maintainer>
   <license>BSD</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <exec_depend>mavros</exec_depend>

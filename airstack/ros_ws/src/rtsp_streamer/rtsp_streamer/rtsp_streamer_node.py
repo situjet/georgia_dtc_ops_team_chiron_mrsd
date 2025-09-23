@@ -1,210 +1,272 @@
 import os
 import time
+import threading
 from typing import Optional
+from collections import deque
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
+import numpy as np
+import cv2
 
-# Try to import OpenCV
-CV_AVAILABLE = False
+# Try to import GStreamer
+GSTREAMER_AVAILABLE = False
 try:
-    import cv2
-    import numpy as np
-    CV_AVAILABLE = True
+    import gi
+    gi.require_version('Gst', '1.0')
+    gi.require_version('GstApp', '1.0')
+    from gi.repository import Gst, GLib, GstApp
+    GSTREAMER_AVAILABLE = True
 except Exception as e:
-    print(f"OpenCV import failed: {e}")
-    CV_AVAILABLE = False
+    print(f"GStreamer import failed: {e}")
+    GSTREAMER_AVAILABLE = False
 
+class GStreamerStreaming:
+    def __init__(self, rtsp_url, width=640, height=360):
+        self.rtsp_url = rtsp_url
+        self.WIDTH = width
+        self.HEIGHT = height
+        self.fps = 5
+        self.is_running = True
+        self.frame_count = 0
+        self.last_log_time = time.time()
+        
+        # Initialize GStreamer
+        Gst.init(None)
+        
+        # Create pipeline
+        self.pipeline = None
+        self.appsink = None
+        
+        # Create main loop and thread
+        self.loop = GLib.MainLoop()
+        self.loop_thread = None
+        
+        # Frame buffer
+        self.frame_buffer = deque(maxlen=10)
+        self.buffer_lock = threading.Lock()
+        
+    def get_pipeline_string(self):
+        """Get GStreamer pipeline string"""
+        try:
+            # Jetson-specific hardware decoder
+            jetson_pipeline = (
+                f"rtspsrc location={self.rtsp_url} latency=0 ! queue ! "
+                "rtph265depay ! queue ! h265parse ! queue ! nvv4l2decoder enable-max-performance=1 ! queue ! "
+                "nvvidconv ! "
+                f"video/x-raw(memory:NVMM),width={self.WIDTH},height={self.HEIGHT} ! queue ! "
+                "videorate ! video/x-raw(memory:NVMM),framerate=5/1 ! queue ! "
+                "nvvidconv ! video/x-raw ! queue ! " 
+                "videoconvert ! video/x-raw,format=BGR ! queue ! "
+                "appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
+            )
+            return jetson_pipeline
+        except Exception:
+            # Fallback to software decoding
+            return (
+                f"rtspsrc location={self.rtsp_url} latency=0 buffer-mode=auto ! queue ! "
+                "rtph265depay ! queue ! h265parse ! queue ! avdec_h265 max-threads=4 ! queue ! "
+                "videorate ! video/x-raw,framerate=5/1 ! queue ! "
+                f"videoscale ! video/x-raw,width={self.WIDTH},height={self.HEIGHT} ! queue ! "
+                "videoconvert ! video/x-raw,format=BGR ! queue ! "
+                "appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
+            )
+        
+    def start_pipeline(self):
+        """Start GStreamer pipeline"""
+        try:
+            pipeline_str = self.get_pipeline_string()
+            print(f"Using GStreamer pipeline: {pipeline_str}")
+            
+            # Create Pipeline
+            self.pipeline = Gst.parse_launch(pipeline_str)
+            
+            # Get appsink element
+            self.appsink = self.pipeline.get_by_name("sink")
+            if not self.appsink:
+                print("Error: Could not get appsink element")
+                return False
+                
+            # Set new frame callback
+            self.appsink.connect("new-sample", self.on_new_sample, None)
+            
+            # Start pipeline
+            ret = self.pipeline.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                print("Error: Could not start GStreamer pipeline")
+                return False
+                
+            # Run GLib main loop in a separate thread
+            self.loop_thread = threading.Thread(target=self.run_loop)
+            self.loop_thread.daemon = True
+            self.loop_thread.start()
+            
+            print("GStreamer streaming started")
+            return True
+            
+        except Exception as e:
+            print(f"Error starting GStreamer: {str(e)}")
+            return False
+            
+    def on_new_sample(self, sink, data):
+        """Process new GStreamer sample"""
+        try:
+            # Get sample
+            sample = sink.emit("pull-sample")
+            if not sample:
+                return Gst.FlowReturn.ERROR
+                
+            # Get buffer from sample
+            buffer = sample.get_buffer()
+            
+            # Get timestamp
+            timestamp = time.time()
+            
+            # Get memory from buffer
+            success, map_info = buffer.map(Gst.MapFlags.READ)
+            if not success:
+                return Gst.FlowReturn.ERROR
+                
+            # Copy data and convert to NumPy array
+            frame_data = np.ndarray(
+                shape=(self.HEIGHT, self.WIDTH, 3),
+                dtype=np.uint8,
+                buffer=map_info.data
+            ).copy()
+            
+            # Release buffer
+            buffer.unmap(map_info)
+            
+            # Add frame and timestamp to buffer
+            with self.buffer_lock:
+                self.frame_buffer.append((frame_data, timestamp))
+                self.frame_count += 1
+                
+            # Periodically log frame rate
+            current_time = time.time()
+            if current_time - self.last_log_time > 5.0:
+                elapsed = current_time - self.last_log_time
+                fps = self.frame_count / elapsed if elapsed > 0 else 0
+                print(f"GStreamer frame rate: {fps:.2f} FPS")
+                self.frame_count = 0
+                self.last_log_time = current_time
+                
+            return Gst.FlowReturn.OK
+            
+        except Exception as e:
+            print(f"Error processing frame: {str(e)}")
+            return Gst.FlowReturn.ERROR
+            
+    def run_loop(self):
+        """Run GLib main loop"""
+        try:
+            self.loop.run()
+        except Exception as e:
+            print(f"GStreamer loop error: {str(e)}")
+            
+    def retrieve_image(self):
+        """Get the latest image frame and timestamp"""
+        with self.buffer_lock:
+            if not self.frame_buffer:
+                return None, 0
+            frame, timestamp = self.frame_buffer[-1]
+            return frame, timestamp
+            
+    def shutdown(self):
+        """Close GStreamer resources"""
+        self.is_running = False
+        
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+            
+        if self.loop and self.loop.is_running():
+            self.loop.quit()
+            
+        if self.loop_thread and self.loop_thread.is_alive():
+            self.loop_thread.join(timeout=3)
 
-class RtspStreamer(Node):
+class RtspStreamerGStreamer(Node):
     def __init__(self):
         super().__init__('rtsp_streamer_node')
 
+        # 声明参数
         self.declare_parameter('rtsp_url', 'rtsp://10.3.1.124:8556/ghadron')
         self.declare_parameter('topic', '/image_raw_compressed')
         self.declare_parameter('fps', 5.0)
-        self.declare_parameter('width', 0)
-        self.declare_parameter('height', 0)
+        self.declare_parameter('width', 640)
+        self.declare_parameter('height', 360)
         self.declare_parameter('jpeg_quality', 60)
-        self.declare_parameter('rtsp_latency_ms', 200)
-        self.declare_parameter('prefer_tcp', True)
-        self.declare_parameter('test_mode', False)
-        self.declare_parameter('force_test_mode', False)  # Force test mode for debugging
 
-        self.rtsp_url: str = self.get_parameter('rtsp_url').get_parameter_value().string_value
-        self.topic: str = self.get_parameter('topic').get_parameter_value().string_value
-        self.fps: float = self.get_parameter('fps').get_parameter_value().double_value or 5.0
-        self.width: int = self.get_parameter('width').get_parameter_value().integer_value
-        self.height: int = self.get_parameter('height').get_parameter_value().integer_value
-        self.jpeg_quality: int = self.get_parameter('jpeg_quality').get_parameter_value().integer_value or 60
-        self.rtsp_latency_ms: int = self.get_parameter('rtsp_latency_ms').get_parameter_value().integer_value or 200
-        self.prefer_tcp: bool = self.get_parameter('prefer_tcp').get_parameter_value().bool_value
-        self.test_mode: bool = self.get_parameter('test_mode').get_parameter_value().bool_value
+        # 获取参数
+        self.rtsp_url = self.get_parameter('rtsp_url').get_parameter_value().string_value
+        self.topic = self.get_parameter('topic').get_parameter_value().string_value
+        self.fps = self.get_parameter('fps').get_parameter_value().double_value or 5.0
+        self.width = self.get_parameter('width').get_parameter_value().integer_value or 640
+        self.height = self.get_parameter('height').get_parameter_value().integer_value or 360
+        self.jpeg_quality = self.get_parameter('jpeg_quality').get_parameter_value().integer_value or 60
 
-        if not CV_AVAILABLE:
-            self.get_logger().fatal('OpenCV is required but not available. Exiting.')
-            raise RuntimeError('OpenCV unavailable')
-
-        # Prefer FFmpeg backend and TCP transport for stability over lossy UDP
-        os.environ['OPENCV_VIDEOIO_PRIORITY_FFMPEG'] = '9999'
-        if self.prefer_tcp:
-            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|stimeout;2000000'
-
+        # 创建发布器
         self.publisher = self.create_publisher(CompressedImage, self.topic, 10)
 
-        self.cap: Optional['cv2.VideoCapture'] = None
-        self.connection_retry_count = 0
-        self.max_retries = 5  # Reduced from 10 to switch to test mode faster
-        self.consecutive_frame_failures = 0
-        self.max_consecutive_failures = 3  # Switch to test mode after 3 consecutive frame failures
+        # 尝试使用GStreamer
+        self.use_gstreamer = GSTREAMER_AVAILABLE
+        self.streamer = None
+        self.cap = None
 
-        # Timer for frame grabbing at target FPS
+        if self.use_gstreamer:
+            self.get_logger().info('✅ 使用GStreamer后端')
+            try:
+                self.streamer = GStreamerStreaming(self.rtsp_url, self.width, self.height)
+                if not self.streamer.start_pipeline():
+                    self.get_logger().warning('GStreamer启动失败，降级到OpenCV')
+                    self.use_gstreamer = False
+                    self._setup_opencv()
+            except Exception as e:
+                self.get_logger().warning(f'GStreamer初始化失败: {e}，降级到OpenCV')
+                self.use_gstreamer = False
+                self._setup_opencv()
+        else:
+            self.get_logger().info('⚠️ 使用OpenCV后端')
+            self._setup_opencv()
+
+        # 定时器
         self.period = 1.0 / max(self.fps, 0.1)
         self.timer = self.create_timer(self.period, self._on_timer)
+        self.frame_count = 0
 
-        # Connect to RTSP or test mode
-        if self.test_mode:
-            self.get_logger().info('Running in test mode - generating synthetic frames')
-            self._setup_test_mode()
-        else:
-            self._connect()
-
-    def _connect(self):
-        if self.cap:
-            try:
-                self.cap.release()
-            except Exception:
-                pass
-            self.cap = None
-
-        if self.connection_retry_count >= self.max_retries:
-            self.get_logger().error(f'Max RTSP connection retries ({self.max_retries}) exceeded. Switching to test mode.')
-            self._setup_test_mode()
-            return
-
-        url = self.rtsp_url
-
-        # Append latency parameter for GStreamer-like servers if not present
-        if 'latency=' not in url and self.rtsp_latency_ms > 0:
-            sep = '&' if '?' in url else '?'
-            url = f"{url}{sep}latency={self.rtsp_latency_ms}"
-
-        self.get_logger().info(f"Connecting RTSP: {url} (attempt {self.connection_retry_count + 1}/{self.max_retries})")
-        
+    def _setup_opencv(self):
+        """设置OpenCV后端"""
         try:
-            self.cap = cv2.VideoCapture(url)
-            if not self.cap.isOpened():
-                self.connection_retry_count += 1
-                self.get_logger().warning(f'Failed to open RTSP stream, will retry. Attempt {self.connection_retry_count}/{self.max_retries}')
-                self.cap = None
-                return
-
-            # Set desired width/height if provided (>0)
+            self.cap = cv2.VideoCapture(self.rtsp_url)
             if self.width > 0:
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.width))
             if self.height > 0:
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.height))
-
-            # Test the connection by reading a frame
-            ok, test_frame = self.cap.read()
-            if not ok or test_frame is None:
-                self.connection_retry_count += 1
-                self.get_logger().warning(f'RTSP stream opened but failed to read test frame. Attempt {self.connection_retry_count}/{self.max_retries}')
-                self.cap.release()
-                self.cap = None
-                return
-
-            self.connection_retry_count = 0  # Reset on successful connection
-            self.consecutive_frame_failures = 0  # Reset frame failure counter
-            self.get_logger().info(f'RTSP stream connected successfully. Frame size: {test_frame.shape}')
-            
         except Exception as e:
-            self.connection_retry_count += 1
-            self.get_logger().error(f'Exception during RTSP connection: {e}. Attempt {self.connection_retry_count}/{self.max_retries}')
-            if self.cap:
-                try:
-                    self.cap.release()
-                except Exception:
-                    pass
-                self.cap = None
-
-    def _setup_test_mode(self):
-        """Generate synthetic frames for testing when RTSP is unavailable"""
-        self.test_mode = True
-        self.test_frame_counter = 0
-        self.get_logger().info('Test mode enabled - will generate synthetic frames')
+            self.get_logger().error(f'OpenCV设置失败: {e}')
 
     def _on_timer(self):
-        if self.test_mode:
-            self._generate_test_frame()
-            return
-
-        if self.cap is None:
-            self._connect()
-            return
-
-        try:
-            ok, frame = self.cap.read()
-            if not ok or frame is None:
-                self.consecutive_frame_failures += 1
-                self.get_logger().warning(f'Frame grab failed ({self.consecutive_frame_failures}/{self.max_consecutive_failures}); will reconnect or switch to test mode')
-                
-                if self.consecutive_frame_failures >= self.max_consecutive_failures:
-                    self.get_logger().warning(f'Too many consecutive frame failures ({self.consecutive_frame_failures}), switching to test mode')
-                    self._setup_test_mode()
-                else:
-                    self._connect()
-                return
-
-            # Reset failure counter on successful frame grab
-            self.consecutive_frame_failures = 0
-            self._publish_frame(frame)
-            
-        except Exception as e:
-            self.get_logger().error(f'Exception during frame processing: {e}')
-            self.consecutive_frame_failures += 1
-            if self.consecutive_frame_failures >= self.max_consecutive_failures:
-                self.get_logger().warning('Too many exceptions, switching to test mode')
-                self._setup_test_mode()
-
-    def _generate_test_frame(self):
-        """Generate a synthetic frame for testing"""
-        # Create a test pattern
-        width = self.width or 640
-        height = self.height or 360
-        
-        # Create gradient background using vectorized operations for efficiency
-        frame = np.zeros((height, width, 3), dtype=np.uint8)
-        
-        # Create meshgrid for efficient gradient calculation
-        x_indices, y_indices = np.meshgrid(np.arange(width), np.arange(height))
-        
-        frame[:, :, 0] = (255 * x_indices / width).astype(np.uint8)  # Red gradient
-        frame[:, :, 1] = (255 * y_indices / height).astype(np.uint8)  # Green gradient
-        frame[:, :, 2] = 128  # Blue constant
-        
-        # Add frame counter text
-        self.test_frame_counter += 1
-        text = f"Test Frame {self.test_frame_counter}"
-        cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        cv2.putText(frame, f"ROS_DOMAIN_ID: {os.environ.get('ROS_DOMAIN_ID', 'unset')}", 
-                   (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"Topic: {self.topic}", 
-                   (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        
-        self._publish_frame(frame)
+        """定时器回调"""
+        if self.use_gstreamer and self.streamer:
+            frame, timestamp = self.streamer.retrieve_image()
+            if frame is not None:
+                self._publish_frame(frame)
+        elif self.cap:
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                self._publish_frame(frame)
 
     def _publish_frame(self, frame):
-        """Encode and publish a frame"""
+        """发布帧"""
         try:
-            # Encode to JPEG (CompressedImage expects JPEG/PNG)
+            # 编码为JPEG
             encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(max(1, min(self.jpeg_quality, 100)))]
             ok, buf = cv2.imencode('.jpg', frame, encode_params)
             if not ok or buf is None:
-                self.get_logger().warning('JPEG encode failed for frame')
                 return
 
+            # 创建ROS消息
             msg = CompressedImage()
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.header.frame_id = 'camera'
@@ -213,30 +275,28 @@ class RtspStreamer(Node):
             
             self.publisher.publish(msg)
             
-            # Log publishing success periodically
-            if hasattr(self, 'frame_count'):
-                self.frame_count += 1
-            else:
-                self.frame_count = 1
-                
-            if self.frame_count % 50 == 0:  # Log every 50 frames (~10 seconds at 5 FPS)
-                mode = "test" if self.test_mode else "RTSP"
-                self.get_logger().info(f'Published {self.frame_count} frames to {self.topic} ({mode} mode)')
+            # 定期日志
+            self.frame_count += 1
+            if self.frame_count % 50 == 0:
+                backend = "GStreamer" if self.use_gstreamer else "OpenCV"
+                self.get_logger().info(f'Published {self.frame_count} frames using {backend}')
                 
         except Exception as e:
-            self.get_logger().error(f'Exception during frame publishing: {e}')
+            self.get_logger().error(f'Frame publishing error: {e}')
 
     def destroy_node(self):
+        """清理资源"""
         try:
+            if self.streamer:
+                self.streamer.shutdown()
             if self.cap:
                 self.cap.release()
         finally:
             return super().destroy_node()
 
-
 def main():
     rclpy.init()
-    node = RtspStreamer()
+    node = RtspStreamerGStreamer()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
@@ -244,7 +304,6 @@ def main():
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

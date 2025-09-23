@@ -1,0 +1,238 @@
+{
+  "configById": {
+    "behavior-control-panel": {
+      "title": "Vehicle Control",
+      "layout": {
+        "direction": "column",
+        "first": {
+          "direction": "row",
+          "first": "arm-disarm-panel",
+          "second": "flight-mode-panel",
+          "splitPercentage": 50
+        },
+        "second": {
+          "direction": "row",
+          "first": "basic-commands-panel",
+          "second": "waypoint-panel",
+          "splitPercentage": 50
+        },
+        "splitPercentage": 50
+      }
+    },
+    "arm-disarm-panel": {
+      "type": "Button",
+      "config": {
+        "buttonText": "ARM/DISARM",
+        "publishTopic": "/foxglove/arm_toggle",
+        "publishType": "std_msgs/Bool",
+        "publishPayload": {
+          "data": true
+        },
+        "style": {
+          "backgroundColor": "#ff4444",
+          "color": "white",
+          "fontSize": "18px",
+          "fontWeight": "bold"
+        }
+      }
+    },
+    "flight-mode-panel": {
+      "type": "PublishPanel",
+      "config": {
+        "topicName": "/foxglove/command",
+        "datatype": "std_msgs/msg/String",
+        "buttonGroups": [
+          {
+            "label": "Flight Modes",
+            "buttons": [
+              {
+                "label": "TAKEOFF",
+                "value": { "data": "takeoff" },
+                "color": "#4CAF50"
+              },
+              {
+                "label": "LAND",
+                "value": { "data": "land" },
+                "color": "#FF9800"
+              },
+              {
+                "label": "HOLD",
+                "value": { "data": "hold" },
+                "color": "#2196F3"
+              },
+              {
+                "label": "RTL",
+                "value": { "data": "rtl" },
+                "color": "#f44336"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "basic-commands-panel": {
+      "type": "PublishPanel",
+      "config": {
+        "topicName": "/foxglove/command",
+        "datatype": "std_msgs/msg/String",
+        "buttonGroups": [
+          {
+            "label": "Mission Control",
+            "buttons": [
+              {
+                "label": "START MISSION",
+                "value": { "data": "mission" },
+                "color": "#4CAF50"
+              },
+              {
+                "label": "CLEAR WAYPOINTS",
+                "value": { "data": "clear_waypoints" },
+                "color": "#FF5722"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "waypoint-panel": {
+      "type": "PublishPanel",
+      "config": {
+        "topicName": "/foxglove/goto_waypoint",
+        "datatype": "sensor_msgs/msg/NavSatFix",
+        "layout": "vertical",
+        "inputs": [
+          {
+            "label": "Latitude",
+            "field": "latitude",
+            "type": "number",
+            "step": 0.000001,
+            "placeholder": "Enter latitude"
+          },
+          {
+            "label": "Longitude",
+            "field": "longitude",
+            "type": "number",
+            "step": 0.000001,
+            "placeholder": "Enter longitude"
+          },
+          {
+            "label": "Altitude (m)",
+            "field": "altitude",
+            "type": "number",
+            "step": 0.1,
+            "placeholder": "Enter altitude",
+            "default": 10.0
+          }
+        ],
+        "publishButton": {
+          "label": "GO TO WAYPOINT",
+          "color": "#4CAF50"
+        }
+      }
+    },
+    "mission-upload-panel": {
+      "type": "PublishPanel",
+      "config": {
+        "topicName": "/foxglove/mission_waypoints",
+        "datatype": "std_msgs/msg/String",
+        "layout": "vertical",
+        "inputs": [
+          {
+            "label": "Mission Waypoints (JSON)",
+            "field": "data",
+            "type": "textarea",
+            "placeholder": "[{\"lat\": 33.776, \"lon\": -84.396, \"alt\": 10}, ...]",
+            "rows": 10
+          }
+        ],
+        "publishButton": {
+          "label": "UPLOAD MISSION",
+          "color": "#2196F3"
+        }
+      }
+    },
+    "map-interaction-panel": {
+      "type": "3DPanel",
+      "config": {
+        "cameraState": {
+          "perspective": true,
+          "distance": 100,
+          "phi": 60,
+          "theta": 45,
+          "target": [0, 0, 0],
+          "targetOrientation": [0, 0, 0, 1]
+        },
+        "followTf": "base_link",
+        "scene": {
+          "enableStats": false,
+          "backgroundColor": "#1e1e1e"
+        },
+        "transforms": {
+          "enablePreloading": false
+        },
+        "topics": {
+          "/mavros/global_position/global": {
+            "visible": true,
+            "color": "#4CAF50"
+          },
+          "/behavior_governor/status": {
+            "visible": true
+          }
+        },
+        "publish": {
+          "type": "pose",
+          "topic": "/foxglove/map_click",
+          "datatype": "geometry_msgs/msg/PoseStamped",
+          "frame_id": "map"
+        }
+      }
+    },
+    "status-panel": {
+      "type": "RawMessages",
+      "config": {
+        "topicPath": "/behavior_governor/status",
+        "showTimestamp": true,
+        "showData": true
+      }
+    },
+    "state-panel": {
+      "type": "StateTransitions",
+      "config": {
+        "paths": [
+          {
+            "value": "/behavior_governor/state.armed",
+            "label": "Armed"
+          },
+          {
+            "value": "/behavior_governor/state.mode",
+            "label": "Flight Mode"
+          },
+          {
+            "value": "/mavros/global_position/rel_alt.data",
+            "label": "Altitude (m)"
+          }
+        ]
+      }
+    }
+  },
+  "globalVariables": {},
+  "layout": {
+    "direction": "row",
+    "first": {
+      "direction": "column",
+      "first": "behavior-control-panel",
+      "second": "status-panel",
+      "splitPercentage": 70
+    },
+    "second": {
+      "direction": "column",
+      "first": "map-interaction-panel",
+      "second": "state-panel",
+      "splitPercentage": 80
+    },
+    "splitPercentage": 40
+  },
+  "playbackConfig": {
+    "speed": 1
+  }
+}

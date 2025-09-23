@@ -3,6 +3,11 @@ set -euo pipefail
 
 # Launch a unified container on NVIDIA Orin NX using the known-good AirStack L4T image,
 # mounting this repo's ROS workspace and using host networking and NVIDIA runtime.
+#
+# Build behavior:
+# - By default, performs incremental builds to save time
+# - Set FORCE_REBUILD=true to force a complete rebuild from scratch
+# - Example: FORCE_REBUILD=true ./run_unified.sh
 
 REPO_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 ROS_WS_HOST="${REPO_ROOT_DIR}/ros_ws"
@@ -81,6 +86,7 @@ docker run -d \
 	-e ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-70} \
 		-e ROBOT_NAME=${ROBOT_NAME_SANITIZED} \
 		-e ROBOT_NAMESPACE=${ROBOT_NAME_SANITIZED} \
+		-e FORCE_REBUILD=${FORCE_REBUILD:-false} \
 	"${XAUTH_OPTION[@]}" \
 	-v "${ROS_WS_HOST}":/root/ros_ws:rw \
 	-v /var/run/docker.sock:/var/run/docker.sock \
@@ -88,9 +94,16 @@ docker run -d \
 	bash --noprofile --norc -lc "set -e; \
 		service ssh restart; \
 		source /opt/ros/humble/setup.bash; \
-		if [ ! -f /root/ros_ws/install/share/robot_bringup/package.xml ] || [ ! -f /root/ros_ws/install/share/rtsp_streamer/package.xml ] || [ ! -x /root/ros_ws/install/lib/rtsp_streamer/rtsp_streamer_node ]; then \
-			echo 'Rebuilding workspace (bringup/rtsp_streamer not installed or console script missing)...'; \
-			cd /root/ros_ws && rm -rf build install log && colcon build --symlink-install --merge-install; \
+		cd /root/ros_ws; \
+		if [ \"\${FORCE_REBUILD:-false}\" = \"true\" ]; then \
+			echo 'Force rebuilding workspace (FORCE_REBUILD=true)...'; \
+			rm -rf build install log && colcon build --symlink-install --merge-install; \
+		elif [ ! -f /root/ros_ws/install/share/rtsp_streamer/package.xml ] || [ ! -x /root/ros_ws/install/lib/rtsp_streamer/rtsp_streamer_node ]; then \
+			echo 'Building workspace (missing packages detected)...'; \
+			colcon build --symlink-install --merge-install; \
+		else \
+			echo 'Workspace appears to be built, performing incremental build...'; \
+			colcon build --symlink-install --merge-install --packages-select-by-dep rtsp_streamer mavros_interface gimbal_control vision_gps_estimator behavior_governor burst_recorder; \
 		fi; \
 		unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH; \
 		source /root/ros_ws/install/setup.bash; \

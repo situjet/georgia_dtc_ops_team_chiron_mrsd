@@ -19,6 +19,14 @@
   <exec_depend>mavros_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
+  
+  <!-- Python dependencies for foxglove_bridge -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-json</exec_depend>
+  
+  <!-- Launch dependencies -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>
 
