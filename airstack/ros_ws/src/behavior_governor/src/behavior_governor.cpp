@@ -1,6 +1,7 @@
 // behavior_governor.cpp
 // C++ node for core vehicle behaviors, exposes topics/services for Python extension
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <mavros_msgs/msg/state.hpp>
@@ -55,6 +56,9 @@ public:
       std::bind(&BehaviorGovernor::on_altitude, this, _1));
 
     // Initialize MAVROS service clients
+    // Using a separate callback group for service clients to prevent deadlock
+    // when calling services from within subscription callbacks.
+    // MutuallyExclusive ensures thread safety for service calls.
     service_callback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     
     arm_disarm_client_ = this->create_client<mavros_msgs::srv::CommandBool>(
@@ -302,6 +306,33 @@ private:
   }
 
   // Waypoint management functions
+  // Synchronous clear helper used before pushing a fresh plan
+  bool clear_waypoints_sync(std::chrono::milliseconds timeout = std::chrono::milliseconds(3000)) {
+    publish_status("Clearing existing mission before push...");
+
+    if (!waypoint_clear_client_->wait_for_service(std::chrono::seconds(2))) {
+      publish_status("Clear waypoints failed: MAVROS waypoint clear service not available");
+      return false;
+    }
+
+    auto req = std::make_shared<mavros_msgs::srv::WaypointClear::Request>();
+    auto fut = waypoint_clear_client_->async_send_request(req);
+
+    if (fut.wait_for(timeout) == std::future_status::ready) {
+      auto resp = fut.get();
+      if (resp->success) {
+        publish_status("Existing mission cleared");
+        return true;
+      } else {
+        publish_status("Clear waypoints failed: PX4 rejected clear request");
+        return false;
+      }
+    } else {
+      publish_status("Clear waypoints timed out");
+      return false;
+    }
+  }
+
   void handle_clear_waypoints() {
     if (!state_initialized_) {
       publish_status("Clear waypoints rejected: MAVROS state not synchronized");
@@ -341,29 +372,35 @@ private:
       return false;
     }
 
-    if (!armed_) {
-      publish_status("Push waypoints rejected: vehicle not armed");
-      return false;
-    }
-
     if (waypoints.empty()) {
       publish_status("Push waypoints rejected: empty waypoint list");
       return false;
     }
 
+    // Note: pushing missions while disarmed is allowed; execution requires arming + AUTO.MISSION
+    if (!armed_) {
+      RCLCPP_INFO(this->get_logger(), "Pushing waypoints while DISARMED (this is allowed)");
+    }
+    
     return true;
   }
 
   void push_waypoints(const std::vector<sensor_msgs::msg::NavSatFix>& waypoints, 
                      double hold_time = 0.0, 
                      double acceptance_radius = 0.5,
-                     const std::vector<double>& yaws = {}) {
+                     const std::vector<double>& yaws = {}) {  // yaws in degrees
     
     if (!can_push_waypoints(waypoints)) {
       return;
     }
 
     publish_status("Pushing " + std::to_string(waypoints.size()) + " waypoints...");
+
+    // Clear existing mission first for clean slate
+    if (!clear_waypoints_sync()) {
+      publish_status("Push waypoints aborted: failed to clear existing mission");
+      return;
+    }
 
     // Check if service is available
     if (!waypoint_push_client_->wait_for_service(std::chrono::seconds(2))) {
@@ -384,17 +421,38 @@ private:
       use_yaws = false;
     }
 
+    // If on ground, prepend a MAV_CMD_NAV_TAKEOFF for clean takeoff profile
+    bool added_takeoff = false;
+    if (!airborne_ && !waypoints.empty()) {
+      mavros_msgs::msg::Waypoint takeoff_wp;
+      takeoff_wp.frame = mavros_msgs::msg::Waypoint::FRAME_GLOBAL_REL_ALT;
+      takeoff_wp.command = 22;  // MAV_CMD_NAV_TAKEOFF
+      takeoff_wp.is_current = true;  // Takeoff is the current waypoint
+      takeoff_wp.autocontinue = true;
+      takeoff_wp.param1 = 0.0;  // Minimum pitch (ignored by PX4 multicopters)
+      takeoff_wp.param2 = 0.0;  // Empty
+      takeoff_wp.param3 = 0.0;  // Empty  
+      takeoff_wp.param4 = std::numeric_limits<double>::quiet_NaN();  // Yaw angle (use current)
+      takeoff_wp.x_lat = 0.0;  // Latitude (ignored - takeoff at current position)
+      takeoff_wp.y_long = 0.0;  // Longitude (ignored - takeoff at current position)
+      takeoff_wp.z_alt = waypoints[0].altitude;  // Target altitude from first waypoint
+      
+      request->waypoints.push_back(takeoff_wp);
+      added_takeoff = true;
+      RCLCPP_INFO(this->get_logger(), "Added MAV_CMD_NAV_TAKEOFF to altitude %.1f m", waypoints[0].altitude);
+    }
+
     // Convert NavSatFix waypoints to MAVROS waypoints
     for (size_t i = 0; i < waypoints.size(); i++) {
       mavros_msgs::msg::Waypoint wp;
       wp.frame = mavros_msgs::msg::Waypoint::FRAME_GLOBAL_REL_ALT;
       wp.command = 16;  // MAV_CMD_NAV_WAYPOINT
-      wp.is_current = (i == 0);  // First waypoint is current
+      wp.is_current = added_takeoff ? false : (i == 0);  // First nav waypoint is current only if no takeoff added
       wp.autocontinue = true;
       wp.param1 = hold_time;  // Hold time at waypoint
       wp.param2 = acceptance_radius;  // Acceptance radius
       wp.param3 = 0.0;  // Pass through waypoint
-      wp.param4 = use_yaws ? yaws[i] : std::numeric_limits<double>::quiet_NaN();  // Yaw angle
+      wp.param4 = use_yaws ? yaws[i] : std::numeric_limits<double>::quiet_NaN();  // Yaw angle in degrees
       wp.x_lat = waypoints[i].latitude;
       wp.y_long = waypoints[i].longitude;
       wp.z_alt = waypoints[i].altitude;
@@ -435,19 +493,14 @@ private:
       return;
     }
 
-    // Convert yaws vector (degrees to radians if needed)
-    std::vector<double> yaws_rad;
-    if (!request->yaws.empty()) {
-      for (double yaw_deg : request->yaws) {
-        yaws_rad.push_back(yaw_deg * M_PI / 180.0);  // Convert to radians
-      }
-    }
-
+    // Pass yaws directly (expecting degrees from service caller)
+    // MAV_CMD_NAV_WAYPOINT param4 expects yaw in degrees
+    
     // Call internal push_waypoints function with synchronous response
     bool success = push_waypoints_sync(request->waypoints, 
                                       request->hold_time, 
                                       request->acceptance_radius, 
-                                      yaws_rad);
+                                      request->yaws);  // Pass degrees directly
 
     response->success = success;
     response->waypoints_pushed = success ? request->waypoints.size() : 0;
@@ -460,13 +513,19 @@ private:
   bool push_waypoints_sync(const std::vector<sensor_msgs::msg::NavSatFix>& waypoints, 
                           double hold_time = 0.0, 
                           double acceptance_radius = 0.5,
-                          const std::vector<double>& yaws = {}) {
+                          const std::vector<double>& yaws = {}) {  // yaws in degrees
     
     if (!can_push_waypoints(waypoints)) {
       return false;
     }
 
     publish_status("Pushing " + std::to_string(waypoints.size()) + " waypoints...");
+
+    // Clear existing mission first for clean slate
+    if (!clear_waypoints_sync()) {
+      publish_status("Push waypoints aborted: failed to clear existing mission");
+      return false;
+    }
 
     // Check if service is available
     if (!waypoint_push_client_->wait_for_service(std::chrono::seconds(2))) {
@@ -487,17 +546,38 @@ private:
       use_yaws = false;
     }
 
-    // Convert NavSatFix waypoints to MAVROS waypoints (following behavior_executive pattern)
+    // If on ground, prepend a MAV_CMD_NAV_TAKEOFF for clean takeoff profile
+    bool added_takeoff = false;
+    if (!airborne_ && !waypoints.empty()) {
+      mavros_msgs::msg::Waypoint takeoff_wp;
+      takeoff_wp.frame = mavros_msgs::msg::Waypoint::FRAME_GLOBAL_REL_ALT;
+      takeoff_wp.command = 22;  // MAV_CMD_NAV_TAKEOFF
+      takeoff_wp.is_current = true;  // Takeoff is the current waypoint
+      takeoff_wp.autocontinue = true;
+      takeoff_wp.param1 = 0.0;  // Minimum pitch (ignored by PX4 multicopters)
+      takeoff_wp.param2 = 0.0;  // Empty
+      takeoff_wp.param3 = 0.0;  // Empty  
+      takeoff_wp.param4 = std::numeric_limits<double>::quiet_NaN();  // Yaw angle (use current)
+      takeoff_wp.x_lat = 0.0;  // Latitude (ignored - takeoff at current position)
+      takeoff_wp.y_long = 0.0;  // Longitude (ignored - takeoff at current position)
+      takeoff_wp.z_alt = waypoints[0].altitude;  // Target altitude from first waypoint
+      
+      request->waypoints.push_back(takeoff_wp);
+      added_takeoff = true;
+      RCLCPP_INFO(this->get_logger(), "Added MAV_CMD_NAV_TAKEOFF to altitude %.1f m", waypoints[0].altitude);
+    }
+
+    // Convert NavSatFix waypoints to MAVROS waypoints
     for (size_t i = 0; i < waypoints.size(); i++) {
       mavros_msgs::msg::Waypoint wp;
       wp.frame = mavros_msgs::msg::Waypoint::FRAME_GLOBAL_REL_ALT;
       wp.command = 16;  // MAV_CMD_NAV_WAYPOINT
-      wp.is_current = (i == 0);  // First waypoint is current
+      wp.is_current = added_takeoff ? false : (i == 0);  // First nav waypoint is current only if no takeoff added
       wp.autocontinue = true;
       wp.param1 = hold_time;  // Hold time at waypoint
       wp.param2 = acceptance_radius;  // Acceptance radius
       wp.param3 = 0.0;  // Pass through waypoint
-      wp.param4 = use_yaws ? yaws[i] : std::numeric_limits<double>::quiet_NaN();  // Yaw angle
+      wp.param4 = use_yaws ? yaws[i] : std::numeric_limits<double>::quiet_NaN();  // Yaw angle in degrees
       wp.x_lat = waypoints[i].latitude;
       wp.y_long = waypoints[i].longitude;
       wp.z_alt = waypoints[i].altitude;
@@ -640,7 +720,15 @@ private:
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<BehaviorGovernor>());
+  
+  // Use MultiThreadedExecutor to prevent deadlock when calling services
+  // from within callbacks. Single-threaded executors cannot process
+  // service responses while blocked on future.wait_for() calls.
+  rclcpp::executors::MultiThreadedExecutor executor;
+  auto node = std::make_shared<BehaviorGovernor>();
+  executor.add_node(node);
+  executor.spin();
+  
   rclcpp::shutdown();
   return 0;
 }
