@@ -14,7 +14,7 @@ type TeleopCommand = {
   panY: number; // -1..1 up/down (positive is up)
   zoom: -1 | 0 | 1; // -1 out, +1 in
   trigger: boolean;
-  modeSwitch: boolean;
+  modeSwitch: boolean; // true = switch camera mode (EO/IR)
   recenter: boolean;
 };
 
@@ -232,6 +232,11 @@ function VirtualGimbalPanel({ context }: { context: PanelExtensionContext }): Re
     publish({ panX: 0, panY: 0, zoom: 0, trigger: false, modeSwitch: false, recenter: false, ...partial });
   };
 
+  // Send stop command immediately when releasing movement buttons
+  const sendStop = () => {
+    publish({ panX: 0, panY: 0, zoom: 0, trigger: false, modeSwitch: false, recenter: false });
+  };
+
   const grid: React.CSSProperties = {
     display: "grid",
     gridTemplateColumns: "repeat(3, 100px)",
@@ -250,32 +255,32 @@ function VirtualGimbalPanel({ context }: { context: PanelExtensionContext }): Re
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
         <div style={grid}>
           <div />
-          <Button label="Up" onPress={() => setUp(true)} onRelease={() => setUp(false)} />
+          <Button label="Up" onPress={() => setUp(true)} onRelease={() => { setUp(false); sendStop(); }} />
           <div />
 
-          <Button label="Left" onPress={() => setLeft(true)} onRelease={() => setLeft(false)} />
+          <Button label="Left" onPress={() => setLeft(true)} onRelease={() => { setLeft(false); sendStop(); }} />
           <div />
-          <Button label="Right" onPress={() => setRight(true)} onRelease={() => setRight(false)} />
+          <Button label="Right" onPress={() => setRight(true)} onRelease={() => { setRight(false); sendStop(); }} />
 
           <div />
-          <Button label="Down" onPress={() => setDown(true)} onRelease={() => setDown(false)} />
+          <Button label="Down" onPress={() => setDown(true)} onRelease={() => { setDown(false); sendStop(); }} />
           <div />
         </div>
 
         <div style={{ display: "grid", gridTemplateRows: "repeat(3, 40px)", gap: 8 }}>
-          <Button label="Zoom +" onPress={() => setZoomIn(true)} onRelease={() => setZoomIn(false)} />
+          <Button label="Zoom +" onPress={() => setZoomIn(true)} onRelease={() => { setZoomIn(false); sendStop(); }} />
           <div style={{ textAlign: "center", fontSize: 12, color: "#666" }}>Zoom</div>
-          <Button label="Zoom -" onPress={() => setZoomOut(true)} onRelease={() => setZoomOut(false)} />
+          <Button label="Zoom -" onPress={() => setZoomOut(true)} onRelease={() => { setZoomOut(false); sendStop(); }} />
         </div>
 
         <div style={{ display: "grid", gap: 8 }}>
-          <Button label="Trigger" onPress={() => sendEdge({ trigger: true })} onRelease={() => {}} />
-          <Button label="Mode" onPress={() => sendEdge({ modeSwitch: true })} onRelease={() => {}} />
+          <Button label="Record" onPress={() => sendEdge({ trigger: true })} onRelease={() => {}} />
+          <Button label="EO/IR" onPress={() => sendEdge({ modeSwitch: true })} onRelease={() => {}} />
           <Button label="Recenter" onPress={() => sendEdge({ recenter: true })} onRelease={() => {}} />
         </div>
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-        Hold direction buttons to continuously pan or zoom. Click other buttons for one-shot actions.
+        Hold direction buttons to continuously pan or zoom. Record: Start/stop 10s EO+IR recording. EO/IR: Switch camera view. Recenter: Reset gimbal position.
       </div>
     </div>
   );
