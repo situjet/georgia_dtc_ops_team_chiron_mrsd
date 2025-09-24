@@ -23,13 +23,20 @@
     <param name="prefer_tcp" value="true"/>
   </node>
 
+  <!-- RTSP forwarder: exposes local TCP proxy for operator access -->
+  <!-- Listens on 0.0.0.0:8556 and forwards to 10.3.1.124:8556 so operator at 10.3.1.96 can access -->
+  <node pkg="rtsp_forwarder" exec="rtsp_forwarder_node" output="screen" respawn="true" respawn_delay="2">
+    <param name="listen_host" value="10.3.1.124"/>
+    <param name="listen_port" value="8556"/>
+    <param name="target_host" value="127.0.0.1"/>
+    <param name="target_port" value="8556"/>
+  </node>
+
   <!-- Add burst recorder node -->
   <node pkg="burst_recorder" exec="burst_recorder_node" output="screen" respawn="true" respawn_delay="2">
-    <param name="rtsp_url" value="rtsp://10.3.1.124:8556/ghadron"/>
+    <param name="compressed_image_topic" value="/image_raw_compressed"/>
     <param name="mcap_dir" value="/root/ros_ws/mcap_recordings"/>
-    <param name="duration_sec" value="10"/>
-    <param name="fps" value="24"/>
-    <param name="video_width" value="1920"/>
-    <param name="video_height" value="1080"/>
+    <param name="duration_sec" value="6"/>
+    <param name="fps" value="2"/>
   </node>
 </launch>

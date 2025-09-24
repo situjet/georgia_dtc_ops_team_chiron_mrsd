@@ -12,10 +12,18 @@ set -euo pipefail
 REPO_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 ROS_WS_HOST="${REPO_ROOT_DIR}/ros_ws"
 
-# Resolve local image to use (no pulling). Prefer the running 'airstack-robot_l4t-1' container's image, else any local *_robot-l4t image
-PREFERRED_CONTAINER="airstack-robot_l4t-1"
-if docker ps -a --format '{{.Names}}' | grep -q "^${PREFERRED_CONTAINER}$"; then
-	IMAGE=$(docker inspect -f '{{.Config.Image}}' ${PREFERRED_CONTAINER} 2>/dev/null || true)
+# Resolve local image to use (no pulling). Prefer the GStreamer-fixed image first
+GSTREAMER_FIXED_IMAGE="airstack-unified:gstreamer-fixed"
+if docker image inspect "${GSTREAMER_FIXED_IMAGE}" >/dev/null 2>&1; then
+	IMAGE="${GSTREAMER_FIXED_IMAGE}"
+fi
+
+# Fallback: Prefer the running 'airstack-robot_l4t-1' container's image, else any local *_robot-l4t image
+if [ -z "${IMAGE:-}" ]; then
+	PREFERRED_CONTAINER="airstack-robot_l4t-1"
+	if docker ps -a --format '{{.Names}}' | grep -q "^${PREFERRED_CONTAINER}$"; then
+		IMAGE=$(docker inspect -f '{{.Config.Image}}' ${PREFERRED_CONTAINER} 2>/dev/null || true)
+	fi
 fi
 if [ -z "${IMAGE:-}" ]; then
 	# fallback: find any local image tagged *_robot-l4t
@@ -103,7 +111,7 @@ docker run -d \
 			colcon build --symlink-install --merge-install; \
 		else \
 			echo 'Workspace appears to be built, performing incremental build...'; \
-			colcon build --symlink-install --merge-install --packages-select-by-dep rtsp_streamer mavros_interface gimbal_control vision_gps_estimator behavior_governor burst_recorder; \
+			colcon build --symlink-install --merge-install --packages-select-by-dep rtsp_forwarder rtsp_streamer mavros_interface gimbal_control vision_gps_estimator behavior_governor burst_recorder; \
 		fi; \
 		unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH; \
 		source /root/ros_ws/install/setup.bash; \

@@ -10,6 +10,7 @@
   <exec_depend>domain_bridge</exec_depend>
   <exec_depend>behavior_governor</exec_depend>
   <exec_depend>rtsp_streamer</exec_depend>
+  <exec_depend>rtsp_forwarder</exec_depend>
   <exec_depend>burst_recorder</exec_depend>
   <exec_depend>gimbal_control</exec_depend>
 </package>
