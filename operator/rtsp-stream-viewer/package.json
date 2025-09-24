@@ -1,0 +1,34 @@
+{
+  "name": "rtsp-stream-viewer",
+  "displayName": "RTSP Stream Viewer",
+  "description": "Foxglove extension for viewing RTSP video streams in real-time",
+  "publisher": "georgia-dtc-ops-team",
+  "homepage": "",
+  "version": "0.1.0",
+  "license": "MIT",
+  "main": "./dist/extension.js",
+  "keywords": ["foxglove", "rtsp", "streaming", "video", "robotics", "camera"],
+  "scripts": {
+    "build": "foxglove-extension build",
+    "foxglove:prepublish": "foxglove-extension build --mode production",
+    "lint": "eslint .",
+    "lint:ci": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "local-install": "foxglove-extension install",
+    "package": "foxglove-extension package",
+    "pretest": "foxglove-extension pretest"
+  },
+  "devDependencies": {
+    "@foxglove/eslint-plugin": "2.1.0",
+    "@foxglove/extension": "2.36.0",
+    "@types/react": "18.3.24",
+    "@types/react-dom": "18.3.7",
+    "create-foxglove-extension": "1.0.6",
+    "eslint": "9.36.0",
+    "hls.js": "1.5.17",
+    "prettier": "3.6.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "5.9.2"
+  }
+}

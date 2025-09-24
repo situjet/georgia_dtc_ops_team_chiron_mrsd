@@ -5,6 +5,32 @@
 #include "payloadSdkInterface.h"
 #include <csignal>
 
+// PayloadSDK constants - ensure these are defined
+#ifndef ZOOM_TYPE_CONTINUOUS
+#define ZOOM_TYPE_CONTINUOUS 1
+#endif
+#ifndef ZOOM_TYPE_STEP
+#define ZOOM_TYPE_STEP 0
+#endif
+#ifndef ZOOM_IN
+#define ZOOM_IN 1
+#endif
+#ifndef ZOOM_OUT
+#define ZOOM_OUT -1
+#endif
+#ifndef ZOOM_STOP
+#define ZOOM_STOP 0
+#endif
+#ifndef PAYLOAD_CAMERA_VIEW_EO
+#define PAYLOAD_CAMERA_VIEW_EO 1
+#endif
+#ifndef PAYLOAD_CAMERA_VIEW_IR
+#define PAYLOAD_CAMERA_VIEW_IR 2
+#endif
+#ifndef PAYLOAD_CAMERA_RECORD_BOTH
+#define PAYLOAD_CAMERA_RECORD_BOTH 0
+#endif
+
 T_ConnInfo s_conn = {
 	CONTROL_UDP,
 	{udp_ip_target, udp_port_target}
@@ -117,13 +143,20 @@ private:
 			try {
 				if (zoom > 0) {
 					RCLCPP_DEBUG(this->get_logger(), "Zoom in command: %.2f", zoom);
-					my_payload_->setCameraZoom(1.0f, zoom); // ZOOM_IN
+					my_payload_->setCameraZoom(ZOOM_TYPE_CONTINUOUS, ZOOM_IN); // Use continuous zoom in
 				} else {
 					RCLCPP_DEBUG(this->get_logger(), "Zoom out command: %.2f", zoom);
-					my_payload_->setCameraZoom(-1.0f, std::abs(zoom)); // ZOOM_OUT
+					my_payload_->setCameraZoom(ZOOM_TYPE_CONTINUOUS, ZOOM_OUT); // Use continuous zoom out
 				}
 			} catch (const std::exception& e) {
 				RCLCPP_ERROR(this->get_logger(), "Failed to control zoom: %s", e.what());
+			}
+		} else if (my_payload_ != nullptr) {
+			// Stop zoom when no zoom command is active
+			try {
+				my_payload_->setCameraZoom(ZOOM_TYPE_CONTINUOUS, ZOOM_STOP);
+			} catch (const std::exception& e) {
+				RCLCPP_DEBUG(this->get_logger(), "Failed to stop zoom: %s", e.what());
 			}
 		}
 		
@@ -143,35 +176,53 @@ private:
 				}
 			}
 			
-			if (msg->buttons[0] > 0) { // Trigger button (index 0)
-				RCLCPP_INFO(this->get_logger(), "Trigger/Capture button pressed");
+			if (msg->buttons[0] > 0) { // Trigger button (index 0) - Record both EO and IR for 10 seconds
+				RCLCPP_INFO(this->get_logger(), "Record button pressed - starting 10s EO+IR recording");
 				try {
 					if (my_payload_ != nullptr) {
-						// Capture image using PayloadSDK
-						my_payload_->setPayloadCameraCaptureImage();
+						// Set recording source to both EO and IR
+						my_payload_->setPayloadCameraParam("C_V_REC", PAYLOAD_CAMERA_RECORD_BOTH, PARAM_TYPE_UINT32);
+						usleep(100000); // Wait 100ms for setting to take effect
+						
+						// Start recording
+						my_payload_->setPayloadCameraRecordVideoStart();
+						
+						// Schedule a stop after 10 seconds
+						recording_timer_ = this->create_wall_timer(
+							std::chrono::seconds(10),
+							[this]() {
+								try {
+									my_payload_->setPayloadCameraRecordVideoStop();
+									RCLCPP_INFO(this->get_logger(), "10-second recording completed");
+									recording_timer_.reset(); // Clear the timer
+								} catch (const std::exception& e) {
+									RCLCPP_ERROR(this->get_logger(), "Failed to stop recording: %s", e.what());
+								}
+							}
+						);
 					}
 				} catch (const std::exception& e) {
-					RCLCPP_ERROR(this->get_logger(), "Failed to capture image: %s", e.what());
+					RCLCPP_ERROR(this->get_logger(), "Failed to start recording: %s", e.what());
 				}
 			}
 			
-			if (msg->buttons[1] > 0) { // Mode switch button (index 1)
-				RCLCPP_INFO(this->get_logger(), "Mode switch button pressed");
+			if (msg->buttons[1] > 0) { // Mode switch button (index 1) - Toggle EO/IR camera view
+				RCLCPP_INFO(this->get_logger(), "Camera mode switch button pressed");
 				try {
 					if (my_payload_ != nullptr) {
-						// Toggle between LOCK and FOLLOW modes
-						static bool is_lock_mode = false;
-						if (is_lock_mode) {
-							my_payload_->setGimbalMode(Gimbal_Protocol::GIMBAL_FOLLOW_MODE);
-							RCLCPP_INFO(this->get_logger(), "Switched to FOLLOW mode");
+						// Toggle between EO and IR camera views
+						static bool is_eo_mode = true;
+						if (is_eo_mode) {
+							my_payload_->setPayloadCameraParam("C_SOURCE", PAYLOAD_CAMERA_VIEW_IR, PARAM_TYPE_UINT32);
+							RCLCPP_INFO(this->get_logger(), "Switched to IR camera view");
 						} else {
-							my_payload_->setGimbalMode(Gimbal_Protocol::GIMBAL_LOCK_MODE);
-							RCLCPP_INFO(this->get_logger(), "Switched to LOCK mode");
+							my_payload_->setPayloadCameraParam("C_SOURCE", PAYLOAD_CAMERA_VIEW_EO, PARAM_TYPE_UINT32);
+							RCLCPP_INFO(this->get_logger(), "Switched to EO camera view");
 						}
-						is_lock_mode = !is_lock_mode;
+						is_eo_mode = !is_eo_mode;
 					}
 				} catch (const std::exception& e) {
-					RCLCPP_ERROR(this->get_logger(), "Failed to switch gimbal mode: %s", e.what());
+					RCLCPP_ERROR(this->get_logger(), "Failed to switch camera view: %s", e.what());
 				}
 			}
 		}
@@ -228,6 +279,7 @@ private:
 	rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_subscriber_;
 	rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_angles_publisher_;
 	rclcpp::TimerBase::SharedPtr timer_;
+	rclcpp::TimerBase::SharedPtr recording_timer_;
 	PayloadSdkInterface* my_payload_{nullptr};
 };
 
