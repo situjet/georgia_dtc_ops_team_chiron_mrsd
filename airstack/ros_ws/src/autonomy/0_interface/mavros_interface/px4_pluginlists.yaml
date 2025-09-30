@@ -1,2 +1,70 @@
-# Example MAVROS PX4 plugin list
-# Copy from old AirStack or customize as needed
+# MAVROS PX4 plugin lists - only load necessary plugins to reduce CPU usage
+# Based on code analysis, only load necessary plugins to reduce CPU usage
+
+/**:
+  ros__parameters:
+    # Use whitelist method, only load necessary plugins
+    plugin_allowlist:
+      # ===== Core system plugins =====
+      - sys_status        # System status and heartbeat (used for /mavros/state)
+      - sys_time          # Time synchronization
+      
+      # ===== Position and navigation plugins =====
+      - global_position   # GPS position, altitude, and heading (/mavros/global_position/*)
+
+
+    # Explicitly disable unnecessary plugins (as a double check)
+    plugin_denylist:
+      # ===== Sensor related (not used) =====
+      - altitude          # Separate altitude plugin (already in global_position)
+      - imu               # IMU data (not used in the project)
+      - '3dr_radio'       # 3DR radio status
+      - distance_sensor   # Distance sensor
+      - rangefinder      # Rangefinder
+      - optical_flow     # Optical flow
+      - px4flow          # PX4Flow sensor
+      - vision_pose      # Vision pose estimation
+      - vision_speed     # Vision speed estimation
+      - mocap            # Motion capture
+      - fake_gps         # Fake GPS
+      - gps_input        # GPS input
+      - hil              # Hardware in the loop simulation
+      
+      # ===== Actuator and control (not used) =====
+      - actuator_control  # Actuator control
+      - adsb             # ADS-B
+      - manual_control   # Manual control
+      - rc_io            # RC input output (not used in the code)
+      - safety_area      # Safety area
+      - setpoint_accel   # Acceleration setpoint
+      - setpoint_attitude # Attitude setpoint
+      - setpoint_raw     # Raw setpoint
+      - setpoint_trajectory # Trajectory setpoint
+      - setpoint_velocity # Velocity setpoint
+      
+      # ===== Data recording and debugging (not used) =====
+      - cam_imu_sync     # Camera IMU sync
+      - camera           # Camera control
+      - cellular_status  # Cellular status
+      - companion_process_status # Companion process status
+      - debug_value      # Debug value
+      - esc_status       # ESC status
+      - esc_telemetry    # ESC telemetry
+      - image_pub        # Image publish
+      - landing_target   # Landing target
+      - log_transfer     # Log transfer
+      - mag_calibration_status # Magnetometer calibration status
+      - mount_control    # Mount control
+      - obstacle_distance # Obstacle distance
+      - odometry         # Odometry
+      - onboard_computer_status # Onboard computer status
+      - play_tune        # Play tune
+      - rallypoint       # Rally point
+      - terrain          # Terrain
+      - trajectory       # Trajectory
+      - tunnel           # Tunnel
+      - vfr_hud          # VFR HUD
+      - vibration        # Vibration
+      - waypoint         # Waypoint (use mission instead)
+      - wheel_odometry   # Wheel odometry
+      - wind_estimation  # Wind estimation

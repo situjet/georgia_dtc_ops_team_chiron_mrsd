@@ -47,7 +47,7 @@ for i in {1..60}; do
 done
 
 # Defaults; customize by exporting these in the user environment if desired
-export ROBOT_NAME="${ROBOT_NAME:-dtc_mrsd_}"
+export ROBOT_NAME="${ROBOT_NAME:-dtc_mrsd}"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-70}"
 
 REPO_ROOT="/home/dtc/georgia_dtc_ops_team_chiron_mrsd"

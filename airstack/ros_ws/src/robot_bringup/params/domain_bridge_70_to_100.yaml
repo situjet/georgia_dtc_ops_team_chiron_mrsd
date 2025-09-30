@@ -1,0 +1,56 @@
+name: domain_bridge_70_to_100
+from_domain: 70
+to_domain: 100
+topics:
+
+  
+  # GPS位置信息 - 从域70桥接到域100
+  /dtc_mrsd_/mavros/global_position/global:
+    type: sensor_msgs/msg/NavSatFix
+    from_domain: 70
+    to_domain: 100
+  
+  
+  # # 目标GPS信息 - 从域70桥接到域100
+  # /center_gps/target_gps:
+  #   type: sensor_msgs/msg/NavSatFix
+  #   from_domain: 70
+  #   to_domain: 100
+  
+
+  # 从域100接收的主题 - 添加你需要的主题
+  /gimbal/teleop:
+    type: sensor_msgs/msg/Joy
+    from_domain: 100
+    to_domain: 70
+  
+  # 另一个从域100接收的主题示例
+  /gimbal/teleop_vector:
+    type: geometry_msgs/msg/Vector3
+    from_domain: 100
+    to_domain: 70
+
+  /dtc_mrsd_/gimbal_angles:
+    type: geometry_msgs/msg/Vector3
+    from_domain: 100
+    to_domain: 70
+
+  /burst_mode/control:
+    type: std_msgs/msg/Bool
+    from_domain: 100
+    to_domain: 70
+
+  # /image_raw_compressed:
+  #   type: sensor_msgs/msg/CompressedImage
+  #   from_domain: 70
+  #   to_domain: 100
+
+  /gimbal_attitude:
+    type: geometry_msgs/msg/Vector3
+    from_domain: 70
+    to_domain: 100
+
+  /manual_targets/geolocated:
+    type: dtc_network_msgs/msg/HumanDataMsg
+    from_domain: 70
+    to_domain: 100

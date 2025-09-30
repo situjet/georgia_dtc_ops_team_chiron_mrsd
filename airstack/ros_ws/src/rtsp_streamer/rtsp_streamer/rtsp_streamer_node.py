@@ -159,6 +159,10 @@ class RtspStreamer(Node):
 
             # Reset failure counter on successful frame grab
             self.consecutive_frame_failures = 0
+            frame_height, frame_width = frame.shape[:2]
+            if getattr(self, '_last_logged_resolution', None) != (frame_width, frame_height):
+                self._last_logged_resolution = (frame_width, frame_height)
+                self.get_logger().info(f'Incoming frame resolution: {frame_width}x{frame_height}')
             self._publish_frame(frame)
             
         except Exception as e:

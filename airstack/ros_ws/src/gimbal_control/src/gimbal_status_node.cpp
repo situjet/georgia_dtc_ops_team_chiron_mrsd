@@ -1,5 +1,5 @@
 #include <rclcpp/rclcpp.hpp>
-#include <geometry_msgs/msg/point.hpp>
+#include <geometry_msgs/msg/vector3.hpp>
 #include "payloadSdkInterface.h"
 
 T_ConnInfo s_conn = {
@@ -10,7 +10,7 @@ T_ConnInfo s_conn = {
 class GimbalStatusNode : public rclcpp::Node {
 public:
 	GimbalStatusNode() : Node("gimbal_status_node") {
-		attitude_publisher_ = this->create_publisher<geometry_msgs::msg::Point>("/gimbal_attitude", 10);
+		attitude_publisher_ = this->create_publisher<geometry_msgs::msg::Vector3>("/gimbal_attitude", 10);
 		initializePayloadSDK();
 		timer_ = this->create_wall_timer(
 			std::chrono::milliseconds(10),
@@ -51,7 +51,7 @@ private:
 	void onPayloadStatusChanged(int event, double* param) {
 		switch(event) {
 			case PAYLOAD_GB_ATTITUDE: {
-				auto msg = geometry_msgs::msg::Point();
+				auto msg = geometry_msgs::msg::Vector3();
 				msg.x = param[0];
 				msg.y = param[1];
 				msg.z = param[2];
@@ -62,7 +62,7 @@ private:
 	}
 
 	PayloadSdkInterface* my_payload_{nullptr};
-	rclcpp::Publisher<geometry_msgs::msg::Point>::SharedPtr attitude_publisher_;
+	rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr attitude_publisher_;
 	rclcpp::TimerBase::SharedPtr timer_;
 };
 

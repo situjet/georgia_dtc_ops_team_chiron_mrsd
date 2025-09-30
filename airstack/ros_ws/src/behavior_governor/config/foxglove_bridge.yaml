@@ -1,0 +1,27 @@
+foxglove_bridge:
+  ros__parameters:
+    # Default waypoint parameters
+    default_altitude: 10.0  # meters
+    default_hold_time: 0.0  # seconds  
+    default_acceptance_radius: 0.5  # meters
+    
+    # Topic remappings (if needed)
+    # These can be overridden in launch file
+    topics:
+      # Input from Foxglove panels
+      foxglove_command: "/foxglove/command"
+      foxglove_arm_toggle: "/foxglove/arm_toggle"
+      foxglove_goto_waypoint: "/foxglove/goto_waypoint"
+      foxglove_mission_waypoints: "/foxglove/mission_waypoints"
+      foxglove_map_click: "/foxglove/map_click"
+      
+      # Output to behavior_governor
+      behavior_command: "/behavior_governor/command"
+      
+      # Feedback from behavior_governor
+      behavior_status: "/behavior_governor/status"
+      behavior_state: "/behavior_governor/state"
+    
+    # Service names
+    services:
+      push_waypoints: "/behavior_governor/push_waypoints"

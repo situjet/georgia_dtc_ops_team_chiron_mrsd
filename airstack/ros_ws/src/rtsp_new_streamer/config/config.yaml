@@ -1,0 +1,35 @@
+rtsp_streamer_node:
+  ros__parameters:
+    # RTSP stream URLs
+    eo_rtsp_url: "rtsp://10.3.1.124:8556/ghadron"
+    ir_rtsp_url: "rtsp://10.3.1.124:8556/ghadron"
+    
+    # Enable/disable streams
+    enable_eo: true
+    enable_ir: true
+    
+    # ========== HIGH QUALITY (HQ) SETTINGS ==========
+    # ROS2 topic names for HQ streams
+    eo_hq_topic: "/raw/image_compressed"
+    ir_hq_topic: "/raw/image_compressed"
+    
+    # HQ stream configuration
+    hq_fps: 30
+    hq_jpeg_quality: 90
+    
+    # ========== LOW QUALITY (LQ) SETTINGS ==========
+    # Enable/disable LQ streams
+    enable_lq: true
+    
+    # ROS2 topic names for LQ streams  
+    eo_lq_topic: "/raw/image_compressed"
+    ir_lq_topic: "/raw/image_compressed"
+    
+    # LQ stream configuration
+    lq_scale_factor: 0.5       # Resolution scaling (0.5 = half resolution)
+    lq_fps_divisor: 2          # Frame rate divisor (2 = half framerate, e.g., 30fps -> 15fps)
+    lq_jpeg_quality: 50        # Initial JPEG quality for LQ (will adapt to meet bitrate target)
+    lq_target_bitrate_mbps: 2.0  # Target bitrate in Mbps for LQ stream
+    
+    # Connection settings
+    reconnect_delay_sec: 5

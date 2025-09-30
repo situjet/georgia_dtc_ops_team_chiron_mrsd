@@ -11,9 +11,9 @@ vision_gps_estimator:
     
     # Streaming configuration
     streaming:
-      rtsp_url: "rtsp://10.3.1.124:8554/ghadron"
-      width: 1080 #640
-      height: 720 #512
+      rtsp_url: "rtsp://10.3.1.124:8556/ghadron"
+      width: 640 #1080 #640
+      height: 512 #720 #512
       fps: 5
       retry_max: 10
       retry_delay: 2.0
@@ -21,7 +21,7 @@ vision_gps_estimator:
       
     # Detection configuration  
     detector:
-      model_path: "yolo12s.pt"
+      model_path: "/root/ros_ws/src/vision_gps_estimator/yolo12s.pt"
       conf_threshold: 0.5
       iou_threshold: 0.45
       max_detections: 10
@@ -79,9 +79,9 @@ vision_gps_estimator:
     # Topic remapping (can be overridden in launch file)
     topics:
       # Input topics
-      mavros_gps: "/robot_1/mavros/global_position/global"
-      mavros_altitude: "/robot_1/mavros/global_position/rel_alt"
-      mavros_heading: "/robot_1/mavros/global_position/compass_hdg"
+      mavros_gps: "/dtc_mrsd/mavros/global_position/global"
+      mavros_altitude: "/dtc_mrsd/mavros/global_position/rel_alt"
+      mavros_heading: "/dtc_mrsd/mavros/global_position/compass_hdg"
       gimbal_attitude: "/gimbal_attitude"
       camera_mode: "/camera_mode"
       
