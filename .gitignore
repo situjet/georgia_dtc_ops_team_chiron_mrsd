@@ -147,3 +147,6 @@ airstack/ros_ws/mcap_recordings
 
 # Any text files
 *.txt
+
+# Submodule ignores
+mavproxy/
