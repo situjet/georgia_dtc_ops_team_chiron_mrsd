@@ -14,14 +14,14 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='root',
-    maintainer_email='root@todo.todo',
+    maintainer='yliu',
+    maintainer_email='yufanliu@andrew.cmu.edu',
     description='RTSP client that publishes JPEG compressed images',
     license='BSD',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'rtsp_streamer_node = rtsp_streamer.rtsp_streamer_node:main',
+            'rtsp_streamer_node = rtsp_streamer.rtsp_streamer_node_gstreamer:main',
         ],
     },
 )

@@ -11,9 +11,9 @@ def generate_launch_description():
             parameters=[{
                 'rtsp_url': 'rtsp://10.3.1.124:8556/ghadron',
                 'topic': '/image_raw_compressed',
-                'fps': 5.0,
+                'fps': 2.0,
                 'width': 640,
-                'height': 360,
+                'height': 512,
                 'jpeg_quality': 50,
                 'rtsp_latency_ms': 200,
                 'prefer_tcp': True,

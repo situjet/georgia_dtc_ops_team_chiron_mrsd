@@ -7,12 +7,17 @@ set -euo pipefail
 REPO_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 ROS_WS_HOST="${REPO_ROOT_DIR}/ros_ws"
 
-# Resolve local image to use (no pulling). Prefer the running 'airstack-robot_l4t-1' container's image, else any local *_robot-l4t image
-PREFERRED_CONTAINER="airstack-robot_l4t-1"
-if docker ps -a --format '{{.Names}}' | grep -q "^${PREFERRED_CONTAINER}$"; then
-	IMAGE=$(docker inspect -f '{{.Config.Image}}' ${PREFERRED_CONTAINER} 2>/dev/null || true)
-fi
-if [ -z "${IMAGE:-}" ]; then
+# Resolve local image to use (no pulling). Prefer our GStreamer-enabled image first
+# Check if our vision-deps GStreamer image exists (with all dependencies)
+if docker image inspect "airstack-unified:gpu-enabled" >/dev/null 2>&1; then
+	IMAGE="airstack-unified:gpu-enabled"
+# Fallback to permanent GStreamer image
+elif docker image inspect "airstack-unified:gstreamer-vision-deps" >/dev/null 2>&1; then
+	IMAGE="airstack-unified:gstreamer-vision-deps"
+elif [ -n "${IMAGE:-}" ]; then
+	# Use explicitly set IMAGE if provided
+	echo "Using explicitly set image: ${IMAGE}"
+else
 	# fallback: find any local image tagged *_robot-l4t
 	IMAGE=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '_robot-l4t$' | head -n1 || true)
 fi
@@ -67,7 +72,7 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
 fi
 
 # Sanitize robot name for ROS namespace (allow only [A-Za-z0-9_])
-HOST_ROBOT_NAME=${ROBOT_NAME:-robot_1}
+HOST_ROBOT_NAME=${ROBOT_NAME:-dtc_mrsd}
 ROBOT_NAME_SANITIZED=$(echo "$HOST_ROBOT_NAME" | tr -c '[:alnum:]_' '_')
 
 # Run container
@@ -78,22 +83,36 @@ docker run -d \
 	--runtime nvidia \
 	--network host \
 	--privileged \
-	-e ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-70} \
+	-e ROS_DOMAIN_ID=70 \
 		-e ROBOT_NAME=${ROBOT_NAME_SANITIZED} \
 		-e ROBOT_NAMESPACE=${ROBOT_NAME_SANITIZED} \
+		-e CLEAN_BUILD=${CLEAN_BUILD:-} \
+		-e BUILD=${BUILD:-0} \
 	"${XAUTH_OPTION[@]}" \
 	-v "${ROS_WS_HOST}":/root/ros_ws:rw \
 	-v /var/run/docker.sock:/var/run/docker.sock \
 	${IMAGE} \
 	bash --noprofile --norc -lc "set -e; \
+		echo 'export ROS_DOMAIN_ID=70' >> /root/.bashrc; \
 		service ssh restart; \
 		source /opt/ros/humble/setup.bash; \
-		if [ ! -f /root/ros_ws/install/share/robot_bringup/package.xml ] || [ ! -f /root/ros_ws/install/share/rtsp_streamer/package.xml ] || [ ! -x /root/ros_ws/install/lib/rtsp_streamer/rtsp_streamer_node ]; then \
-			echo 'Rebuilding workspace (bringup/rtsp_streamer not installed or console script missing)...'; \
-			cd /root/ros_ws && rm -rf build install log && colcon build --symlink-install --merge-install; \
+		if [ \"\${BUILD:-0}\" = \"1\" ]; then \
+			if [ \"\${CLEAN_BUILD:-}\" = \"1\" ]; then \
+				echo 'Clean build requested - removing build artifacts...'; \
+				cd /root/ros_ws && rm -rf build install log; \
+			fi; \
+			echo 'Building workspace...'; \
+			cd /root/ros_ws && colcon build --symlink-install; \
+		else \
+			echo 'Skipping build (BUILD=0). Set BUILD=1 to enable building.'; \
 		fi; \
+		mkdir -p /root/ros_ws/install/vision_gps_estimator/lib/vision_gps_estimator; \
+		ln -sf /root/ros_ws/install/vision_gps_estimator/bin/center_pixel_gps_node /root/ros_ws/install/vision_gps_estimator/lib/vision_gps_estimator/center_pixel_gps_node 2>/dev/null || true; \
 		unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH; \
 		source /root/ros_ws/install/setup.bash; \
+		source /root/ros_ws/install/robot_bringup/share/robot_bringup/local_setup.bash; \
+		source /root/ros_ws/install/mavros_interface/share/mavros_interface/local_setup.bash; \
+		source /root/ros_ws/install/gimbal_control/share/gimbal_control/local_setup.bash; \
 		env | egrep 'AMENT_PREFIX_PATH|COLCON_PREFIX_PATH|CMAKE_PREFIX_PATH' || true; \
 		ros2 pkg list | grep -E 'robot_bringup|rtsp_streamer'; \
 		ros2 launch robot_bringup robot.launch.xml"

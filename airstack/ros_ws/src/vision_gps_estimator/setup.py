@@ -20,13 +20,16 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='yliu',
-    maintainer_email='yliu@gatech.edu',
+    maintainer_email='yufanliu@andrew.cmu.edu',
     description='Vision-based GPS target estimation using RTSP stream and MAVROS integration',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'integrated_node = vision_gps_estimator.integrated_node:main',
+            # 'integrated_node = vision_gps_estimator.integrated_node:main',
+            'center_pixel_gps_node = vision_gps_estimator.center_pixel_gps_node:main',
+            # 'simple_gps_publisher = vision_gps_estimator.simple_gps_publisher:main',
+            # 'simple_yolo_tester = vision_gps_estimator.simple_yolo_tester:main',
         ],
     },
 )

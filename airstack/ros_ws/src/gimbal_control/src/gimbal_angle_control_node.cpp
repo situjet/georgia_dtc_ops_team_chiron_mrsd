@@ -4,6 +4,21 @@
 #include "sensor_msgs/msg/joy.hpp"
 #include "payloadSdkInterface.h"
 #include <csignal>
+#include <vector>
+
+// Fallback definitions if specific platform SDK headers did not define them
+#ifndef ZOOM_OUT
+#define ZOOM_OUT -1
+#endif
+#ifndef ZOOM_STOP
+#define ZOOM_STOP 0
+#endif
+#ifndef ZOOM_IN
+#define ZOOM_IN 1
+#endif
+#ifndef ZOOM_TYPE_CONTINUOUS
+#define ZOOM_TYPE_CONTINUOUS 1
+#endif
 
 T_ConnInfo s_conn = {
 	CONTROL_UDP,
@@ -52,10 +67,26 @@ public:
 			}
 		}
 
+		// Declare configurable parameters (can be overridden via ROS2 CLI/launch)
+		this->declare_parameter<int>("zoom_axis", 2); // axis index for zoom control
+		this->declare_parameter<double>("zoom_deadband", 0.05);
+		this->declare_parameter<int>("eo_ir_toggle_button", 3); // button index to toggle EO/IR
+		// Defaults assume MIO is EO and VIO is IR; can be overridden
+		this->declare_parameter<int>("eo_state", static_cast<int>(CABLE_STATE_MIO));
+		this->declare_parameter<int>("ir_state", static_cast<int>(CABLE_STATE_VIO));
+
+		zoom_axis_ = this->get_parameter("zoom_axis").as_int();
+		zoom_deadband_ = this->get_parameter("zoom_deadband").as_double();
+		eo_ir_toggle_button_ = this->get_parameter("eo_ir_toggle_button").as_int();
+		eo_state_ = this->get_parameter("eo_state").as_int();
+		ir_state_ = this->get_parameter("ir_state").as_int();
+
 		RCLCPP_INFO(this->get_logger(), "Node ready to receive commands");
 		RCLCPP_INFO(this->get_logger(), "Primary topic: /gimbal/teleop (Joy messages)");
 		RCLCPP_INFO(this->get_logger(), "Backup topic: /gimbal/teleop_vector (Vector3)");
 		RCLCPP_INFO(this->get_logger(), "Angle topic: gimbal_angles");
+		RCLCPP_INFO(this->get_logger(), "Zoom axis=%d deadband=%.2f", zoom_axis_, zoom_deadband_);
+		RCLCPP_INFO(this->get_logger(), "EO/IR toggle button index=%d (EO state=%d IR state=%d)", eo_ir_toggle_button_, eo_state_, ir_state_);
 	}
 
 	~GimbalAngleControlNode() {
@@ -88,7 +119,7 @@ private:
 		
 		float pan_x = msg->axes[0];  // left/right movement (-1 to 1)
 		float pan_y = msg->axes[1];  // up/down movement (-1 to 1)
-		float zoom = (msg->axes.size() > 2) ? msg->axes[2] : 0.0f; // zoom control
+		float zoom = (zoom_axis_ >= 0 && static_cast<size_t>(zoom_axis_) < msg->axes.size()) ? msg->axes[zoom_axis_] : 0.0f; // zoom control (continuous)
 		
 		// Check if any movement is being commanded (non-zero axes)
 		bool is_moving = (std::abs(pan_x) > 0.01f || std::abs(pan_y) > 0.01f);
@@ -112,18 +143,27 @@ private:
 			set_gimbal_angle(0.0f, 0.0f, 0.0f, true); // stop all movement
 		}
 		
-		// Handle zoom commands
-		if (std::abs(zoom) > 0.01f && my_payload_ != nullptr) {
-			try {
-				if (zoom > 0) {
-					RCLCPP_DEBUG(this->get_logger(), "Zoom in command: %.2f", zoom);
-					my_payload_->setCameraZoom(1.0f, zoom); // ZOOM_IN
-				} else {
-					RCLCPP_DEBUG(this->get_logger(), "Zoom out command: %.2f", zoom);
-					my_payload_->setCameraZoom(-1.0f, std::abs(zoom)); // ZOOM_OUT
+		// Handle zoom commands (continuous). Correct usage: setCameraZoom(ZOOM_TYPE_CONTINUOUS, ZOOM_[IN/OUT/STOP])
+		if (my_payload_ != nullptr) {
+			bool above_deadband = std::abs(zoom) > zoom_deadband_;
+			int desired_zoom_cmd = ZOOM_STOP;
+			if (above_deadband) {
+				desired_zoom_cmd = (zoom > 0) ? ZOOM_IN : ZOOM_OUT;
+			}
+			if (desired_zoom_cmd != last_zoom_cmd_) {
+				try {
+					my_payload_->setCameraZoom(ZOOM_TYPE_CONTINUOUS, desired_zoom_cmd);
+					if (desired_zoom_cmd == ZOOM_IN) {
+						RCLCPP_DEBUG(this->get_logger(), "Zoom IN start");
+					} else if (desired_zoom_cmd == ZOOM_OUT) {
+						RCLCPP_DEBUG(this->get_logger(), "Zoom OUT start");
+					} else {
+						RCLCPP_DEBUG(this->get_logger(), "Zoom STOP");
+					}
+					last_zoom_cmd_ = desired_zoom_cmd;
+				} catch (const std::exception& e) {
+					RCLCPP_ERROR(this->get_logger(), "Failed to control zoom: %s", e.what());
 				}
-			} catch (const std::exception& e) {
-				RCLCPP_ERROR(this->get_logger(), "Failed to control zoom: %s", e.what());
 			}
 		}
 		
@@ -173,6 +213,24 @@ private:
 				} catch (const std::exception& e) {
 					RCLCPP_ERROR(this->get_logger(), "Failed to switch gimbal mode: %s", e.what());
 				}
+			}
+
+			// EO/IR toggle (rising edge detection)
+			if (eo_ir_toggle_button_ >= 0 && static_cast<size_t>(eo_ir_toggle_button_) < msg->buttons.size()) {
+				bool pressed = msg->buttons[eo_ir_toggle_button_] > 0;
+				if (pressed && !last_eo_ir_pressed_) {
+					try {
+						if (my_payload_ != nullptr) {
+							int target_state = using_eo_ ? ir_state_ : eo_state_;
+							my_payload_->setGimbalICSwitch(static_cast<cable_state_e>(target_state));
+							using_eo_ = !using_eo_;
+							RCLCPP_INFO(this->get_logger(), "Switched to %s camera (state=%d)", using_eo_ ? "EO" : "IR", target_state);
+						}
+					} catch (const std::exception& e) {
+						RCLCPP_ERROR(this->get_logger(), "Failed to toggle EO/IR: %s", e.what());
+					}
+				}
+				last_eo_ir_pressed_ = pressed;
 			}
 		}
 	}
@@ -229,6 +287,18 @@ private:
 	rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_angles_publisher_;
 	rclcpp::TimerBase::SharedPtr timer_;
 	PayloadSdkInterface* my_payload_{nullptr};
+
+	// Zoom state tracking
+	int last_zoom_cmd_ {ZOOM_STOP};
+	int zoom_axis_ {2};
+	double zoom_deadband_ {0.05};
+
+	// EO/IR switching
+	int eo_ir_toggle_button_ {3};
+	int eo_state_ {static_cast<int>(CABLE_STATE_MIO)}; // assumed EO
+	int ir_state_ {static_cast<int>(CABLE_STATE_VIO)}; // assumed IR
+	bool using_eo_ {true};
+	bool last_eo_ir_pressed_ {false};
 };
 
 void signal_handler(int signum) {

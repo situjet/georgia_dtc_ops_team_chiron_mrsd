@@ -1,0 +1,78 @@
+cmake_minimum_required(VERSION 3.8)
+project(gimbal_control)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# Add GHADRON definition for compatibility with PayloadSDK
+add_definitions(-DGHADRON=1)
+
+# find dependencies
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(Threads REQUIRED)
+
+# Set PayloadSDK paths
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    set(PAYLOADSDK_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../PayloadSdk/libs/x86_64)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    set(PAYLOADSDK_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../PayloadSdk/libs/aarch64)
+else()
+    message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
+message("PayloadSDK library path: ${PAYLOADSDK_LIB}")
+
+# Include directories
+include_directories(${PAYLOADSDK_LIB})
+include_directories(${PAYLOADSDK_LIB}/payload-define)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../PayloadSdk/libs/third-party/mavlink/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../PayloadSdk/libs/gSDK/src/mavlink/include/mavlink/v2.0)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../PayloadSdk/libs/gSDK/src)
+
+# Add executable for gimbal teleop control node (listens to /gimbal/teleop)
+add_executable(gimbal_teleop_control_node src/gimbal_angle_control_node.cpp)
+ament_target_dependencies(gimbal_teleop_control_node 
+  rclcpp 
+  geometry_msgs
+  std_msgs
+  sensor_msgs
+)
+target_link_libraries(gimbal_teleop_control_node
+  ${PAYLOADSDK_LIB}/libPayloadSDK.a
+  ${CMAKE_THREAD_LIBS_INIT}
+  stdc++fs
+)
+
+# Add executable for gimbal status node
+add_executable(gimbal_status_node src/gimbal_status_node.cpp)
+ament_target_dependencies(gimbal_status_node 
+  rclcpp 
+  geometry_msgs
+  std_msgs
+)
+target_link_libraries(gimbal_status_node
+  ${PAYLOADSDK_LIB}/libPayloadSDK.a
+  ${CMAKE_THREAD_LIBS_INIT}
+  stdc++fs
+)
+
+install(TARGETS
+  gimbal_teleop_control_node
+  gimbal_status_node
+  DESTINATION lib/${PROJECT_NAME})
+
+# Install header files
+# install(DIRECTORY include/
+#   DESTINATION include/)
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+endif()
+
+ament_package()

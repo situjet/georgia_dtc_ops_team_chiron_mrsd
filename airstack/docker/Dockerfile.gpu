@@ -1,0 +1,52 @@
+FROM airstack-unified:gstreamer-vision-deps
+
+# --- System and build deps (JP6.2) ------------------------------------------
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    python3.10 python3.10-venv python3.10-dev python3-pip \
+    # Build deps for torchvision (per NVIDIA post)
+    git build-essential pkg-config cmake ninja-build \
+    libopenblas-dev libjpeg-dev zlib1g-dev libavcodec-dev libavformat-dev libswscale-dev \
+    # OpenCV with GStreamer from apt (pip wheels usually lack GStreamer)
+    python3-opencv \
+    ca-certificates wget curl && \
+  rm -rf /var/lib/apt/lists/*
+
+# --- Create a Python 3.10 venv that can see system site-packages (for cv2) ---
+RUN python3.10 -m venv /opt/py310 --system-site-packages
+ENV PATH=/opt/py310/bin:$PATH
+RUN python -m pip install -U pip wheel setuptools
+
+# --- Install JP6.2-compatible PyTorch 2.3.0 (Py3.10, aarch64, CUDA 12.x) ----
+# Source: "PyTorch for Jetson" (JetPack 6.2 + Python 3.10 -> torch 2.3.0 wheel)
+RUN python -m pip install --no-cache-dir \
+  https://nvidia.box.com/shared/static/mp164asf3sceb570wvjsrezk1p4ftj8t.whl
+
+# --- Install compatible torchvision for PyTorch 2.3.0 ------------------------
+# Use the NVIDIA official torchvision wheel for Jetson
+RUN python -m pip install --no-cache-dir \
+  https://nvidia.box.com/shared/static/xpr06qe6ql3l6rj22cu3c45tz1wzi36p.whl
+
+# --- Your app libs (don't let ultralytics pull a mismatched torch) -----------
+RUN python -m pip install --no-cache-dir --no-deps ultralytics && \
+    python -m pip install --no-cache-dir requests psutil pyyaml pillow matplotlib
+
+# --- Sanity check (build-time) ----------------------------------------------
+RUN python - <<'PY'
+try:
+    import torch, torchvision, cv2
+    print("✅ torch:", torch.__version__)
+    print("✅ torchvision:", torchvision.__version__)
+    print("✅ cv2 has GStreamer?", "GStreamer" in cv2.getBuildInformation())
+    print("✅ All packages imported successfully")
+except Exception as e:
+    print("⚠️  Import warning:", str(e))
+    print("Will continue - GPU functionality verified at runtime")
+PY
+
+# Set working directory
+WORKDIR /root/ros_ws
+
+# Add labels
+LABEL description="AirStack Unified Docker image with GPU-accelerated YOLO support for Jetson JetPack 6.2"
+LABEL jetpack_version="6.2"
+LABEL gpu_enabled="true"

@@ -49,7 +49,12 @@ logger = logging.getLogger(__name__)
 
 
 class GPSManagerFixed:
-    """Enhanced GPS Manager with fixed coordinate system handling and improved error handling."""
+    """
+    Simplified GPS Manager with fixed coordinate system handling.
+    
+    This version removes clustering functionality and focuses on direct GPS estimation.
+    Always publishes estimated GPS coordinates without buffering or clustering.
+    """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None, buffer_size: int = 30):
         """
@@ -57,15 +62,10 @@ class GPSManagerFixed:
         
         Args:
             config: Configuration dictionary with camera and estimation parameters
-            buffer_size: Maximum number of targets to keep per cluster
+            buffer_size: Not used anymore (kept for compatibility)
         """
         # Configuration
         self.config = config or {}
-        
-        # Target clustering
-        self.target_clusters = []
-        self.min_distance_threshold = self.config.get('min_distance_threshold', 5.0)  # meters
-        self.buffer_size = buffer_size
         
         # Camera intrinsics - will be set by configuration
         self.current_intrinsic = None
@@ -82,9 +82,7 @@ class GPSManagerFixed:
         self.stats = {
             'total_estimations': 0,
             'successful_estimations': 0,
-            'failed_estimations': 0,
-            'total_targets_added': 0,
-            'active_clusters': 0
+            'failed_estimations': 0
         }
         
         logger.info("GPSManagerFixed initialized with enhanced coordinate system handling")
@@ -145,14 +143,16 @@ class GPSManagerFixed:
         logger.info(f"Camera type set to: {camera_type}")
 
     def load_intrinsics_from_config(self, camera_config: Dict[str, Any], 
-                                   image_width: int, image_height: int):
+                                   image_width: int, image_height: int, 
+                                   digital_zoom_factor: float = 1.0):
         """
-        Load camera intrinsics from configuration with resolution scaling.
+        Load camera intrinsics from configuration with resolution scaling and digital zoom compensation.
         
         Args:
             camera_config: Configuration dictionary with camera parameters
             image_width: Current image width
             image_height: Current image height
+            digital_zoom_factor: Digital zoom multiplier (1.0 = no zoom, 2.0 = 2x zoom)
         """
         try:
             camera_type = camera_config.get('mode', 'EO').upper()
@@ -176,6 +176,7 @@ class GPSManagerFixed:
             else:  # IR
                 cal_width, cal_height = 1280, 720
             
+            # Scale intrinsics for resolution changes
             if image_width != cal_width or image_height != cal_height:
                 scale_x = image_width / cal_width
                 scale_y = image_height / cal_height
@@ -187,6 +188,14 @@ class GPSManagerFixed:
                 
                 logger.info(f"Scaled intrinsics for resolution {image_width}x{image_height} "
                            f"(from {cal_width}x{cal_height})")
+            
+            # Apply digital zoom compensation
+            if digital_zoom_factor != 1.0:
+                fx *= digital_zoom_factor
+                fy *= digital_zoom_factor
+                # Note: cx, cy remain unchanged as zoom center stays at image center
+                
+                logger.info(f"Applied digital zoom factor: {digital_zoom_factor}x")
             
             self.set_camera_intrinsics(fx, fy, cx, cy)
             self.current_camera_type = camera_type
@@ -426,149 +435,37 @@ class GPSManagerFixed:
             
         return True
 
-    # Target clustering methods (enhanced from original)
+    # Simplified GPS estimation - no clustering
     def add_target(self, latitude: float, longitude: float) -> str:
         """
-        Add a target to GPS manager and return cluster ID.
+        Legacy method for compatibility - now just validates coordinates.
         
         Args:
             latitude: Target latitude in degrees
             longitude: Target longitude in degrees
             
         Returns:
-            Cluster ID string
+            Always returns "simple" since no clustering is used
         """
         if not self._validate_gps_coordinates(latitude, longitude):
             logger.warning(f"Invalid target coordinates: {latitude}, {longitude}")
             return "invalid"
         
-        new_target = (latitude, longitude, time.time())
-        self.stats['total_targets_added'] += 1
-        
-        if not self.target_clusters:
-            self._create_new_cluster(new_target)
-            return "0"
-            
-        closest_idx, min_distance = self._find_closest_cluster(latitude, longitude)
-        
-        if min_distance > self.min_distance_threshold:
-            self._create_new_cluster(new_target)
-            self._rank_clusters_by_density()
-            cluster_id = self._find_target_cluster_id(new_target)
-        else:
-            self._add_to_cluster(closest_idx, new_target)
-            self._rank_clusters_by_density()
-            cluster_id = self._find_target_cluster_id(new_target)
-        
-        self.stats['active_clusters'] = len(self.target_clusters)
-        return cluster_id
-
-    def _find_target_cluster_id(self, target: Tuple[float, float, float]) -> str:
-        """Find which cluster contains the target."""
-        for cluster in self.target_clusters:
-            if target in cluster["targets"]:
-                return cluster["id"]
-        return "unknown"
-
-    def _create_new_cluster(self, target: Tuple[float, float, float]):
-        """Create a new cluster with the given target."""
-        new_idx = len(self.target_clusters)
-        self.target_clusters.append({
-            "id": f"{new_idx}",
-            "center": (target[0], target[1]),
-            "targets": [target],
-            "created_time": time.time(),
-            "last_updated": time.time()
-        })
-
-    def _add_to_cluster(self, cluster_idx: int, target: Tuple[float, float, float]):
-        """Add target to existing cluster and update center."""
-        cluster = self.target_clusters[cluster_idx]
-        cluster["targets"].append(target)
-        cluster["last_updated"] = time.time()
-        
-        # Maintain buffer size
-        if len(cluster["targets"]) > self.buffer_size:
-            cluster["targets"].sort(key=lambda t: t[2])  # Sort by timestamp
-            cluster["targets"] = cluster["targets"][-self.buffer_size:]
-        
-        # Update cluster center (weighted average)
-        latitudes = [t[0] for t in cluster["targets"]]
-        longitudes = [t[1] for t in cluster["targets"]]
-        
-        cluster["center"] = (
-            sum(latitudes) / len(latitudes),
-            sum(longitudes) / len(longitudes)
-        )
-
-    def _rank_clusters_by_density(self):
-        """Rank clusters by target count and recency."""
-        def cluster_score(cluster):
-            target_count = len(cluster["targets"])
-            recency = time.time() - cluster["last_updated"]
-            return target_count - (recency / 3600)  # Decay over hours
-        
-        self.target_clusters.sort(key=cluster_score, reverse=True)
-        
-        # Update IDs after sorting
-        for i, cluster in enumerate(self.target_clusters):
-            cluster["id"] = f"{i}"
-
-    def _find_closest_cluster(self, latitude: float, longitude: float) -> Tuple[int, float]:
-        """Find closest cluster to given coordinates."""
-        min_distance = float('inf')
-        closest_idx = -1
-        
-        for idx, cluster in enumerate(self.target_clusters):
-            center_lat, center_lon = cluster["center"]
-            distance = self._calculate_haversine_distance(
-                latitude, longitude, center_lat, center_lon
-            )
-            
-            if distance < min_distance:
-                min_distance = distance
-                closest_idx = idx
-                
-        return closest_idx, min_distance
-
-    def _calculate_haversine_distance(self, lat1: float, lon1: float, 
-                                    lat2: float, lon2: float) -> float:
-        """Calculate Haversine distance between two points in meters."""
-        R = 6371000.0  # Earth radius in meters
-        
-        lat1_rad = math.radians(lat1)
-        lon1_rad = math.radians(lon1)
-        lat2_rad = math.radians(lat2)
-        lon2_rad = math.radians(lon2)
-        
-        dlon = lon2_rad - lon1_rad
-        dlat = lat2_rad - lat1_rad
-        
-        a = (math.sin(dlat/2)**2 + 
-             math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon/2)**2)
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        
-        return R * c
+        logger.debug(f"Target added (no clustering): {latitude:.6f}, {longitude:.6f}")
+        return "simple"
 
     def get_active_clusters(self) -> List[Dict]:
         """
-        Return all active target clusters with enhanced metadata.
+        Return empty list since clustering is disabled.
         
         Returns:
-            List of cluster dictionaries with metadata
+            Empty list for compatibility
         """
-        current_time = time.time()
-        
-        for cluster in self.target_clusters:
-            cluster["target_count"] = len(cluster["targets"])
-            cluster["age_seconds"] = current_time - cluster["created_time"]
-            cluster["last_update_seconds_ago"] = current_time - cluster["last_updated"]
-        
-        return self.target_clusters
+        return []
 
     def get_cluster_count(self) -> int:
-        """Return number of active clusters."""
-        return len(self.target_clusters)
+        """Return 0 since clustering is disabled."""
+        return 0
 
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -581,31 +478,18 @@ class GPSManagerFixed:
         stats['success_rate'] = (
             stats['successful_estimations'] / max(stats['total_estimations'], 1)
         )
-        stats['active_clusters'] = len(self.target_clusters)
+        stats['active_clusters'] = 0  # No clustering
         stats['current_camera_type'] = self.current_camera_type
         return stats
 
     def cleanup_old_clusters(self, max_age_hours: float = 24.0):
         """
-        Clean up old clusters that haven't been updated recently.
+        No-op method for compatibility - no clusters to clean up.
         
         Args:
-            max_age_hours: Maximum age in hours before cluster removal
+            max_age_hours: Ignored since no clustering is used
         """
-        current_time = time.time()
-        max_age_seconds = max_age_hours * 3600
-        
-        initial_count = len(self.target_clusters)
-        
-        self.target_clusters = [
-            cluster for cluster in self.target_clusters
-            if (current_time - cluster["last_updated"]) < max_age_seconds
-        ]
-        
-        # Re-rank after cleanup
-        if len(self.target_clusters) != initial_count:
-            self._rank_clusters_by_density()
-            logger.info(f"Cleaned up {initial_count - len(self.target_clusters)} old clusters")
+        logger.debug("Cluster cleanup called but no clustering is enabled")
 
 
 # Alias for backward compatibility

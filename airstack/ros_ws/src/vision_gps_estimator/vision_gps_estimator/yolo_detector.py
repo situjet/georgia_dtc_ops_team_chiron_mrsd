@@ -57,6 +57,9 @@ class YOLODetector:
         self.target_classes = config.get('target_classes', [0])  # Person class
         self.enable_preprocessing = config.get('enable_preprocessing', False)
         
+        # GPU/Device configuration
+        self.device = self._detect_device()
+        
         # Model and state
         self.model = None
         self.is_loaded = False
@@ -73,6 +76,41 @@ class YOLODetector:
         logger.info(f"YOLODetector initialized with model: {self.model_path}")
         logger.info(f"Detection parameters - conf: {self.conf_threshold}, "
                    f"iou: {self.iou_threshold}, max_det: {self.max_detections}")
+        logger.info(f"Using device: {self.device}")
+
+    def _detect_device(self) -> str:
+        """
+        Detect the best available device for YOLO inference.
+        
+        Returns:
+            Device string ('cuda:0', 'cpu', etc.)
+        """
+        # For Jetson platforms, prefer GPU if available
+        try:
+            # Check if we're on a Jetson platform
+            with open('/proc/device-tree/model', 'r') as f:
+                model = f.read().lower()
+                if 'jetson' in model or 'orin' in model or 'xavier' in model:
+                    logger.info(f"Detected Jetson platform: {model.strip()}")
+                    # Check if nvidia-smi shows GPU
+                    import subprocess
+                    try:
+                        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
+                        if result.returncode == 0 and 'Orin' in result.stdout:
+                            device = 'cuda:0'
+                            logger.info("Using GPU on Jetson platform (detected via nvidia-smi)")
+                            return device
+                    except:
+                        pass
+        except:
+            pass
+        
+        # Let ultralytics handle device detection automatically
+        # This is more reliable than manual PyTorch detection
+        device = 'auto'
+        logger.info("Using automatic device detection (ultralytics will choose best available)")
+        
+        return device
 
     def load_model(self) -> bool:
         """
@@ -95,8 +133,21 @@ class YOLODetector:
             # Determine task based on model path
             task = 'pose' if 'pose' in self.model_path.lower() else 'detect'
             
-            # Load model
+            # Load model - ultralytics will handle device selection automatically
             self.model = YOLO(self.model_path, task=task)
+            
+            # Log the actual device being used by the model
+            try:
+                if hasattr(self.model, 'device'):
+                    actual_device = str(self.model.device)
+                    logger.info(f"Model loaded on device: {actual_device}")
+                elif hasattr(self.model.model, 'device'):
+                    actual_device = str(self.model.model.device)
+                    logger.info(f"Model loaded on device: {actual_device}")
+                else:
+                    logger.info("Device information not available from model")
+            except Exception as e:
+                logger.debug(f"Could not determine model device: {e}")
             
             # Warm up model with dummy inference
             self._warmup_model()
@@ -206,7 +257,7 @@ class YOLODetector:
             # Record inference start time
             inference_start = time.time()
             
-            # Run inference
+            # Run inference - let ultralytics handle device automatically
             results = self.model(
                 processed_image,
                 imgsz=self.input_size,

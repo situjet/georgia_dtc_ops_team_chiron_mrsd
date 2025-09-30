@@ -40,7 +40,7 @@ def generate_launch_description():
     
     declare_robot_namespace_arg = DeclareLaunchArgument(
         'robot_namespace',
-        default_value='robot_1',
+        default_value='dtc_mrsd',
         description='Robot namespace for MAVROS topics'
     )
     
@@ -89,11 +89,11 @@ def generate_launch_description():
         parameters=[LaunchConfiguration('config_file')],
         remappings=[
             # MAVROS topic remappings
-            ('/robot_1/mavros/global_position/global', 
+            ('/dtc_mrsd/mavros/global_position/global', 
              [LaunchConfiguration('robot_namespace'), '/mavros/global_position/global']),
-            ('/robot_1/mavros/global_position/rel_alt',
+            ('/dtc_mrsd/mavros/global_position/rel_alt',
              [LaunchConfiguration('robot_namespace'), '/mavros/global_position/rel_alt']),
-            ('/robot_1/mavros/global_position/compass_hdg',
+            ('/dtc_mrsd/mavros/global_position/compass_hdg',
              [LaunchConfiguration('robot_namespace'), '/mavros/global_position/compass_hdg']),
         ],
         arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],

@@ -1,0 +1,25 @@
+<!-- ROS Domain Bridge from Domain 70 to Domain 100 -->
+<launch>
+  <!-- Domain Bridge Node -->
+  <node pkg="domain_bridge" exec="domain_bridge"
+    name="domain_bridge_70_to_100"
+    args="/root/ros_ws/src/robot_bringup/params/domain_bridge_70_to_100.yaml"
+    output="screen" 
+    respawn="true" 
+    respawn_delay="2">
+    
+    <!-- 设置日志级别 -->
+    <param name="log_level" value="INFO"/>
+    
+    <!-- 可选：设置特定的ROS域ID环境变量 -->
+    <env name="ROS_DOMAIN_ID" value="70"/>
+  </node>
+  
+  <!-- 可选：添加监控节点来检查桥接状态 -->
+  <!-- 
+  <node pkg="rqt_graph" exec="rqt_graph" 
+    name="domain_bridge_monitor"
+    output="screen"
+    if="$(var monitor_bridge false)"/>
+  -->
+</launch>

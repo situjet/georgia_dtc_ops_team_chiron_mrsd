@@ -1,35 +1,108 @@
-<!-- ROBOT -->
+<!-- ROBOT - Complete System Launch with all components -->
 <launch>
   <push_ros_namespace namespace="$(env ROBOT_NAMESPACE)" />
-  <set_parameter name="use_sim_time" value="true" />
-  <include file="/root/ros_ws/src/autonomy/0_interface/mavros_interface/launch/px4.launch" />
-  <node pkg="behavior_governor" exec="behavior_governor_node" output="screen" respawn="true" respawn_delay="2" />
-  <node pkg="domain_bridge" exec="domain_bridge"
-    args="/root/ros_ws/src/robot_bringup/params/domain_bridge.yaml"
-    output="screen" respawn="true" respawn_delay="1" />
-    
-  <!-- Gimbal control node for teleop and PayloadSDK integration -->
-  <node pkg="gimbal_control" exec="gimbal_angle_control_node" output="screen" respawn="true" respawn_delay="2" />
-    
-  <!-- Low-latency operator preview stream (compressed ~5 fps) -->
-  <node pkg="rtsp_streamer" exec="rtsp_streamer_node" output="screen" respawn="true" respawn_delay="2">
+  <set_parameter name="use_sim_time" value="false" />
+  
+  <!-- MAVROS Interface for flight controller communication -->
+  <include file="$(find-pkg-share mavros_interface)/launch/px4.launch">
+    <arg name="fcu_url" value="serial:///dev/ttyACM0:57600"/>
+    <arg name="gcs_url" value="udp://@172.20.2.207:14550"/>
+    <arg name="tgt_system" value="1"/>
+    <arg name="tgt_component" value="1"/>
+    <arg name="log_output" value="screen"/>
+    <arg name="fcu_protocol" value="v2.0"/>
+    <arg name="respawn_mavros" value="true"/>
+    <arg name="namespace" value="mavros"/>
+  </include>
+
+  <!-- RTSP Streamer for camera feed
+  <node pkg="rtsp_streamer" exec="rtsp_streamer_node" output="log" respawn="true" respawn_delay="10">
     <param name="rtsp_url" value="rtsp://10.3.1.124:8556/ghadron"/>
     <param name="topic" value="/image_raw_compressed"/>
-    <param name="fps" value="5.0"/>
+    <param name="fps" value="4.0"/>
     <param name="width" value="640"/>
     <param name="height" value="360"/>
-    <param name="jpeg_quality" value="50"/>
+    <param name="jpeg_quality" value="20"/>
     <param name="rtsp_latency_ms" value="200"/>
-    <param name="prefer_tcp" value="true"/>
+    <param name="prefer_tcp" value="false"/>
+    <param name="test_mode" value="false"/>
+  </node> -->
+
+
+  <!-- Center Pixel GPS Estimator (our new simplified node) -->
+  <!-- <node pkg="vision_gps_estimator" exec="center_pixel_gps_node" output="log" respawn="true" respawn_delay="3">
+    <param name="estimation.frequency" value="10.0"/>
+    <param name="estimation.enable_continuous" value="true"/>
+    <param name="image.width" value="640"/>
+    <param name="image.height" value="360"/>
+    <param name="sync.max_sync_time_diff" value="0.5"/>
+    <param name="sync.buffer_size" value="10"/>
+    <param name="output.jpeg_quality" value="10"/>
+    <param name="output.publish_local_enu" value="false"/>
+    <param name="output.publish_camera_info" value="false"/>
+    <param name="output.sigma_lat_lon_m" value="5.0"/>
+    <param name="output.publish_center_marker" value="false"/>
+    <param name="camera.mode" value="EO"/>
+    <param name="camera.auto_scale_with_resolution" value="true"/>
+    <param name="camera.digital_zoom_factor" value="1.0"/>
+    <param name="camera_intrinsics.EO.fx" value="515.1042901585477"/>
+    <param name="camera_intrinsics.EO.fy" value="515.1042901585475"/>
+    <param name="camera_intrinsics.EO.cx" value="320.0"/>
+    <param name="camera_intrinsics.EO.cy" value="256.0"/>
+    <param name="camera_intrinsics.EO.distortion" value="[0.0, 0.0, 0.0, 0.0, 0.0]"/>
+    <param name="camera_intrinsics.EO.calibration_resolution" value="[640, 512]"/>
+    <param name="camera_intrinsics.IR.fx" value="1133.0"/>
+    <param name="camera_intrinsics.IR.fy" value="796.5"/>
+    <param name="camera_intrinsics.IR.cx" value="320.0"/>
+    <param name="camera_intrinsics.IR.cy" value="156.0"/>
+    <param name="camera_intrinsics.IR.distortion" value="[0.0, 0.0, 0.0, 0.0, 0.0]"/>
+    <param name="camera_intrinsics.IR.calibration_resolution" value="[1280, 720]"/>
+    <param name="gps_estimation.simple_mode" value="true"/>
+    <param name="topics.mavros_gps" value="/dtc_mrsd_/mavros/global_position/global"/>
+    <param name="topics.mavros_altitude" value="/dtc_mrsd_/mavros/global_position/rel_alt"/>
+    <param name="topics.mavros_heading" value="/dtc_mrsd_/mavros/global_position/compass_hdg"/>
+    <param name="qos.sensor_data.reliability" value="best_effort"/>
+    <param name="qos.state_data.reliability" value="best_effort"/>
+    <param name="topics.gimbal_attitude" value="/gimbal_attitude"/>
+    <param name="topics.camera_mode" value="/camera_mode"/>
+    <param name="topics.target_gps" value="/center_gps/target_gps"/>
+    <param name="performance.enable_profiling" value="false"/>
+    <param name="performance.log_performance_stats" value="false"/>
+    <param name="performance.stats_log_interval" value="30.0"/>
+    <param name="logging.level" value="INFO"/>
+    <param name="logging.log_to_file" value="false"/>
+  </node> -->
+
+  <!-- Gimbal Control - Status Node for attitude feedback -->
+  <node pkg="gimbal_control" exec="gimbal_status_node" output="log" respawn="true" respawn_delay="2">
+    <!-- Node publishes to /gimbal_attitude topic automatically -->
+  </node>
+  <node pkg="gimbal_control" exec="gimbal_angle_control_node" output="log" respawn="true" respawn_delay="2">
+    <!-- Node publishes to /gimbal_angles topic automatically -->
   </node>
 
-  <!-- Add burst recorder node -->
-  <node pkg="burst_recorder" exec="burst_recorder_node" output="screen" respawn="true" respawn_delay="2">
-    <param name="rtsp_url" value="rtsp://10.3.1.124:8556/ghadron"/>
+
+  <!-- Human Data Publisher and Recorder node -->
+  <!-- <node pkg="burst_recorder" exec="burst_recorder_node" output="log" respawn="true" respawn_delay="20">
+    <param name="image_topic" value="/image_raw"/>
     <param name="mcap_dir" value="/root/ros_ws/mcap_recordings"/>
-    <param name="duration_sec" value="10"/>
-    <param name="fps" value="24"/>
-    <param name="video_width" value="1920"/>
-    <param name="video_height" value="1080"/>
+    <param name="burst_duration_sec" value="6"/>
+    <param name="burst_fps" value="2"/>
+    <param name="publish_fps" value="3"/>
+    <param name="enable_continuous_publish" value="true"/>
+    <param name="system_name" value="uav_mrsd_1"/>
+    <param name="topics_to_record" value="['/manual_targets/geolocated']"/>
+  </node> -->
+
+  <!-- ROS Domain Bridge: Domain 70 to Domain 100 -->
+  <node pkg="domain_bridge" exec="domain_bridge"
+    name="domain_bridge_70_to_100"
+    args="/root/ros_ws/src/robot_bringup/params/domain_bridge_70_to_100.yaml"
+    output="log" 
+    respawn="true" 
+    respawn_delay="3">
+    <!-- logging level -->
+    <param name="log_level" value="INFO"/>
   </node>
+
 </launch>

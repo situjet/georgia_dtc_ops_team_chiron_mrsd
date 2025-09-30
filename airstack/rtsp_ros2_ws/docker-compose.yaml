@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  rtsp_streamer:
+    build: .
+    container_name: rtsp_ros2_streamer
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      - ROS_DOMAIN_ID=0
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/fastdds_profile.xml
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+      - FASTRTPS_DISABLE_SHM=1
+    volumes:
+      # Mount config file at runtime
+      - ./config.yaml:/ros2_ws/install/rtsp_streamer/share/rtsp_streamer/config/config.yaml:ro
+      # Optional: mount local config if needed
+      - ${CONFIG_PATH:-./src/rtsp_streamer/config/config.yaml}:/ros2_ws/config/config.yaml:ro
+    restart: unless-stopped
+    command: ros2 launch rtsp_streamer rtsp_streamer.launch.py

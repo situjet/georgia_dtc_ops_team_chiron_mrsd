@@ -2,7 +2,13 @@
 set -euo pipefail
 
 # Load configuration
-source "$(dirname "$0")/../config/simple_config.env"
+CONFIG_FILE="$(dirname "$0")/../config/simple_config.env"
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+else
+    echo "ERROR: Configuration file not found: $CONFIG_FILE"
+    exit 1
+fi
 
 # Ensure local directories exist
 mkdir -p "$LOCAL_MCAP_DIR"
@@ -18,7 +24,7 @@ rsync -av --progress \
       --partial --partial-dir="$PARTIAL_DIR" \
       --timeout=60 \
       -e "sshpass -p 'passme24' ssh -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=no" \
-      "${REMOTE_USER}@${REMOTE_IP}:${REMOTE_MCAP_DIR}*.mcap.gz" \
+      "${REMOTE_USER}@${REMOTE_IP}:${REMOTE_MCAP_DIR}" \
       "$LOCAL_MCAP_DIR"
 
 echo "MCAP synchronization completed."

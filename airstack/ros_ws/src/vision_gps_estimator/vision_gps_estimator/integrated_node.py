@@ -34,7 +34,6 @@ from std_msgs.msg import Bool, Float32, String, Float64, Header
 from cv_bridge import CvBridge
 
 # Local modules
-from .streaming import StreamingModule
 from .yolo_detector import YOLODetector, DetectionResult
 from .gps_manager import GPSManagerFixed
 
@@ -89,16 +88,16 @@ class VisionGPSEstimatorNode(Node):
                 ('diagnostics_period', 10.0),
                 
                 # Streaming parameters
-                ('streaming.rtsp_url', 'rtsp://10.3.1.124:8554/ghadron'),
-                ('streaming.width', 1080),
-                ('streaming.height', 720),
+                ('streaming.rtsp_url', 'rtsp://10.3.1.124:8556/ghadron'),
+                ('streaming.width', 640),
+                ('streaming.height', 512),
                 ('streaming.fps', 5),
                 ('streaming.retry_max', 10),
                 ('streaming.retry_delay', 2.0),
                 ('streaming.buffer_size', 10),
                 
                 # Detector parameters
-                ('detector.model_path', 'yolo12s.pt'),
+                ('detector.model_path', '/root/ros_ws/src/vision_gps_estimator/yolo12s.pt'),
                 ('detector.conf_threshold', 0.5),
                 ('detector.iou_threshold', 0.45),
                 ('detector.max_detections', 10),
@@ -146,9 +145,9 @@ class VisionGPSEstimatorNode(Node):
                 ('gps_estimation.cluster_buffer_size', 30),
                 
                 # Topic names
-                ('topics.mavros_gps', '/robot_1/mavros/global_position/global'),
-                ('topics.mavros_altitude', '/robot_1/mavros/global_position/rel_alt'),
-                ('topics.mavros_heading', '/robot_1/mavros/global_position/compass_hdg'),
+                ('topics.mavros_gps', '/dtc_mrsd/mavros/global_position/global'),
+                ('topics.mavros_altitude', '/dtc_mrsd/mavros/global_position/rel_alt'),
+                ('topics.mavros_heading', '/dtc_mrsd/mavros/global_position/compass_hdg'),
                 ('topics.gimbal_attitude', '/gimbal_attitude'),
                 ('topics.camera_mode', '/camera_mode'),
                 ('topics.image_compressed', '/vision_gps/image_compressed'),
@@ -211,12 +210,12 @@ class VisionGPSEstimatorNode(Node):
         config['diagnostics_period'] = self.get_parameter('diagnostics_period').value
         
         # Extract parameters
-        for param in self._parameters:
-            param_name = param.replace('_', '.')
-            value = self.get_parameter(param).value
+        for param_descriptor in self._parameters.values():
+            param_name = param_descriptor.name
+            value = self.get_parameter(param_name).value
             
             # Skip node-level params already handled
-            if param in ['node_name', 'publish_diagnostics', 'diagnostics_period']:
+            if param_name in ['node_name', 'publish_diagnostics', 'diagnostics_period']:
                 continue
             
             # Group parameters
@@ -325,9 +324,6 @@ class VisionGPSEstimatorNode(Node):
 
     def _initialize_components(self):
         """Initialize core processing components."""
-        # Initialize streaming module
-        self.streaming_module = StreamingModule(self.config['streaming'])
-        
         # Initialize YOLO detector
         self.yolo_detector = YOLODetector(self.config['detector'])
         
@@ -407,6 +403,15 @@ class VisionGPSEstimatorNode(Node):
             self.config['topics']['camera_mode'],
             self._camera_mode_callback,
             state_qos
+        )
+        
+        # Image subscription - directly subscribe to compressed image topic
+        self.image_sub = self.create_subscription(
+            CompressedImage,
+            '/image_raw_compressed',
+            self._image_callback,
+            sensor_qos,
+            callback_group=self.sensor_callback_group
         )
 
     def _setup_publishers(self):
@@ -491,6 +496,8 @@ class VisionGPSEstimatorNode(Node):
         # Frame processing
         self.latest_frame_info = None
         self.frame_lock = threading.Lock()
+        self.current_frame = None
+        self.current_frame_timestamp = None
         
         # Performance tracking
         self.stats = {
@@ -504,76 +511,17 @@ class VisionGPSEstimatorNode(Node):
 
     def _start_processing_threads(self):
         """Start background processing threads."""
-        # Start streaming
-        if not self.streaming_module.start_pipeline():
-            self.get_logger().error("Failed to start streaming pipeline")
-            return
-        
         # Load YOLO model
         if not self.yolo_detector.load_model():
             self.get_logger().error("Failed to load YOLO model")
             return
         
-        # Start processing threads
-        self.streaming_thread = threading.Thread(
-            target=self._streaming_loop, 
-            daemon=True
-        )
-        self.streaming_thread.start()
-        
+        # Start detection processing thread
         self.detection_thread = threading.Thread(
             target=self._detection_loop,
             daemon=True
         )
         self.detection_thread.start()
-
-    def _streaming_loop(self):
-        """Main streaming loop for frame capture and publishing."""
-        target_fps = 5  # Reduced from streaming fps for processing
-        frame_interval = 1.0 / target_fps
-        last_process_time = 0
-        
-        while rclpy.ok():
-            try:
-                current_time = time.time()
-                
-                # Rate limiting
-                if current_time - last_process_time < frame_interval:
-                    time.sleep(0.01)
-                    continue
-                
-                # Get latest frame
-                frame_result = self.streaming_module.retrieve_image()
-                if frame_result is None:
-                    continue
-                
-                frame, frame_timestamp = frame_result
-                last_process_time = current_time
-                
-                # Find synchronized sensor readings
-                sync_data = self._get_synchronized_sensor_data(frame_timestamp)
-                
-                # Store frame info for detection thread
-                with self.frame_lock:
-                    self.latest_frame_info = {
-                        'frame': frame.copy(),
-                        'timestamp': frame_timestamp,
-                        'sync_data': sync_data
-                    }
-                
-                # Publish compressed image
-                self._publish_compressed_image(frame, frame_timestamp)
-                
-                # Publish camera info
-                if self.config['output']['publish_camera_info']:
-                    self._publish_camera_info(frame_timestamp)
-                
-                self.stats['frames_processed'] += 1
-                self.stats['last_frame_time'] = frame_timestamp
-                
-            except Exception as e:
-                self.get_logger().error(f"Error in streaming loop: {e}")
-                time.sleep(1.0)
 
     def _detection_loop(self):
         """Main detection loop for YOLO inference and GPS estimation."""
@@ -590,26 +538,42 @@ class VisionGPSEstimatorNode(Node):
                     time.sleep(0.01)
                     continue
                 
-                # Get latest frame info
-                frame_info = None
+                # Get latest frame
+                frame = None
+                frame_timestamp = None
                 with self.frame_lock:
-                    if self.latest_frame_info is not None:
-                        frame_info = self.latest_frame_info.copy()
-                        self.latest_frame_info = None  # Mark as consumed
+                    if self.current_frame is not None:
+                        frame = self.current_frame.copy()
+                        frame_timestamp = self.current_frame_timestamp
                 
-                if frame_info is None:
+                if frame is None:
                     continue
+                
+                # Find synchronized sensor readings
+                sync_data = self._get_synchronized_sensor_data(frame_timestamp)
                 
                 last_detection_time = current_time
                 processing_start = time.time()
                 
                 # Run YOLO detection
-                detection_result = self.yolo_detector.infer(frame_info['frame'])
+                detection_result = self.yolo_detector.infer(frame)
                 if detection_result is None or len(detection_result.boxes) == 0:
                     continue
                 
                 # Process detections
+                frame_info = {
+                    'frame': frame,
+                    'timestamp': frame_timestamp,
+                    'sync_data': sync_data
+                }
                 self._process_detections(detection_result, frame_info)
+                
+                # Publish compressed image
+                self._publish_compressed_image(frame, frame_timestamp)
+                
+                # Publish camera info
+                if self.config['output']['publish_camera_info']:
+                    self._publish_camera_info(frame_timestamp)
                 
                 # Update performance stats
                 processing_time = time.time() - processing_start
@@ -957,6 +921,31 @@ class VisionGPSEstimatorNode(Node):
             except Exception as e:
                 self.get_logger().error(f"Failed to update camera mode: {e}")
 
+    def _image_callback(self, msg: CompressedImage):
+        """Handle incoming compressed image messages."""
+        try:
+            # Convert compressed image to OpenCV format
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            
+            if frame is None:
+                self.get_logger().warning("Failed to decode compressed image")
+                return
+            
+            # Store frame with timestamp for processing
+            timestamp = self.get_clock().now().nanoseconds / 1e9
+            
+            # Add to frame buffer for processing
+            with threading.Lock():
+                self.current_frame = frame
+                self.current_frame_timestamp = timestamp
+                
+            # Update statistics
+            self.stats['frames_processed'] += 1
+            
+        except Exception as e:
+            self.get_logger().error(f"Error processing image: {e}")
+
     # Performance monitoring
     def _update_processing_stats(self, processing_time: float):
         """Update processing time statistics."""
@@ -972,7 +961,6 @@ class VisionGPSEstimatorNode(Node):
         stats = self.stats.copy()
         
         # Add component stats
-        streaming_stats = self.streaming_module.get_stats()
         detector_stats = self.yolo_detector.get_stats()
         gps_stats = self.gps_manager.get_stats()
         
@@ -983,7 +971,6 @@ class VisionGPSEstimatorNode(Node):
             f"GPS Estimates: {stats['gps_estimates']}, "
             f"Sync Failures: {stats['sync_failures']}, "
             f"Avg Processing: {stats['average_processing_time']:.3f}s, "
-            f"Streaming FPS: {streaming_stats.get('average_fps', 0):.1f}, "
             f"Detection Time: {detector_stats.get('average_inference_time', 0):.1f}ms, "
             f"GPS Success Rate: {gps_stats.get('success_rate', 0):.2f}"
         )
@@ -996,9 +983,6 @@ class VisionGPSEstimatorNode(Node):
     def destroy_node(self):
         """Clean shutdown of the node."""
         self.get_logger().info("Shutting down VisionGPSEstimatorNode...")
-        
-        # Stop streaming
-        self.streaming_module.shutdown()
         
         # Stop detector
         self.yolo_detector.shutdown()
