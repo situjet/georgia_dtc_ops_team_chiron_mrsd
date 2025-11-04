@@ -1,0 +1,40 @@
+name: vision_gps_estimator
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Python version
+  - python=3.10
+  
+  # Core scientific computing
+  - numpy>=1.21.0
+  - scipy>=1.7.0
+  
+  # Computer vision
+  - opencv>=4.5.0
+  
+  # Configuration and utilities
+  - pyyaml>=6.0
+  - pytest>=6.0.0
+  - pytest-cov>=3.0.0
+  
+  # System libraries for GStreamer (if available via conda)
+  - gstreamer
+  - gst-plugins-base
+  - gst-plugins-good
+  - gst-plugins-bad
+  - gst-plugins-ugly
+  - gst-libav
+  
+  # Python GI bindings
+  - pygobject
+  
+  # Additional utilities
+  - pip
+  - setuptools
+  - wheel
+  
+  # Pip-only dependencies
+  - pip:
+    - ultralytics>=8.0.0
+    # Note: ROS2 packages should be installed system-wide via apt

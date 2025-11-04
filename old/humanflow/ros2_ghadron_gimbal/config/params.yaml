@@ -1,0 +1,51 @@
+# Configuration parameters for IntegratedNode
+# ============================================
+
+integrated_node:
+  ros__parameters:
+    # Profiling settings
+    enable_profiling: true
+    profiling_report_interval: 300.0
+    
+    # Streaming configuration
+    streaming:
+      rtsp_url: "rtsp://10.3.1.124:8554/ghadron"
+      width: 640
+      height: 512
+      fps: 10
+    
+    # Detection configuration  
+    detector:
+      model_path: "models/yolo11s-pose.engine"
+      conf_threshold: 0.5
+      iou_threshold: 0.45
+      max_detections: 10
+    
+    # Synchronization settings
+    sync:
+      max_sync_time_diff: 0.1  # seconds
+    
+    # Output settings
+    output:
+      jpeg_quality: 10
+      publish_local_enu: false
+      sigma_lat_lon_m: 5.0
+    
+    # Camera settings
+    camera:
+      mode: "EO"  # EO or IR
+      
+    # Camera intrinsics (will be loaded based on mode)
+    camera_intrinsics:
+      EO:
+        fx: 475.0
+        fy: 505.0
+        cx: 320.0
+        cy: 256.0
+        distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+      IR:
+        fx: 2267.0
+        fy: 1593.0
+        cx: 640.0
+        cy: 360.0
+        distortion: [0.0, 0.0, 0.0, 0.0, 0.0]

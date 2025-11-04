@@ -6,7 +6,7 @@
   <!-- MAVROS Interface for flight controller communication -->
   <include file="$(find-pkg-share mavros_interface)/launch/px4.launch">
     <arg name="fcu_url" value="serial:///dev/ttyACM0:57600"/>
-    <arg name="gcs_url" value="udp://@172.20.2.207:14550"/>
+    <arg name="gcs_url" value="udp://@10.3.1.10:14550"/>
     <arg name="tgt_system" value="1"/>
     <arg name="tgt_component" value="1"/>
     <arg name="log_output" value="screen"/>
@@ -103,6 +103,46 @@
     respawn_delay="3">
     <!-- logging level -->
     <param name="log_level" value="INFO"/>
+  </node>
+
+  <!-- Behavior Tree System -->
+  <!-- Behavior Tree Implementation - Low-level logic engine -->
+  <node pkg="behavior_tree" exec="behavior_tree_implementation"
+    name="behavior_tree_node"
+    output="screen"
+    respawn="true"
+    respawn_delay="3">
+    <param name="config" value="$(find-pkg-share behavior_tree)/config/drone.tree" />
+    <param name="timeout" value="1.0" />
+  </node>
+
+  <!-- Behavior Executive - High-level mission logic -->
+  <node pkg="behavior_executive" exec="behavior_executive"
+    name="behavior_executive"
+    output="screen"
+    respawn="true"
+    respawn_delay="3">
+    <!-- 
+      Behavior Executive Node Configuration
+      Pipeline: User sends commands -> behavior_tree_commands -> state machine -> action execution
+      
+      Topics:
+      - Input: /behavior_tree_commands (user commands)
+      - MAVROS: /mavros/state, /mavros/global_position/* (system state)
+      - Mission: target_waypoint, target_gps, etc. (mission planning)
+      - Output: Action status published to behavior tree nodes
+    -->
+    
+    <!-- Command input - users send behavior commands here (relative to namespace) -->
+    <!-- Since behavior_tree_commands is relative, it will be under $(ROBOT_NAMESPACE)/behavior_tree_commands -->
+    <!-- To access globally, users should publish to /$(ROBOT_NAMESPACE)/behavior_tree_commands -->
+    
+    <!-- MAVROS topics are already absolute paths in code (/mavros/...), no remap needed -->
+    <!-- Mission planning topics (relative paths) will be under node namespace -->
+    <!-- Search/survey topics are absolute paths (/target_gps_list, /target_gps, etc.) -->
+    
+    <!-- Note: Geofence topic is hardcoded to /robot_1/mavros/geofence/fences in code -->
+    <!-- This may need adjustment based on your robot namespace -->
   </node>
 
 </launch>
