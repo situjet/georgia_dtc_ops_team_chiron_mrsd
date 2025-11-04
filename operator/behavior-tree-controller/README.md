@@ -9,6 +9,8 @@ Foxglove Studio 扩展，用于通过 GUI 面板向行为树状态机发送命�
 - **[OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)** - 完整操作员指南（推荐）
 
 ### 🔧 技术文档
+- **[AIRSTACK_GCS_COMPATIBILITY.md](AIRSTACK_GCS_COMPATIBILITY.md)** - ⭐ AirStack_GCS 消息格式兼容性说明
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - ⭐ 故障排除完整指南
 - **[CRITICAL_FIX.md](CRITICAL_FIX.md)** - clientPublish 配置说明
 - **[USAGE.md](USAGE.md)** - 详细使用和故障排除
 - **[QUICK_FIX.md](QUICK_FIX.md)** - 常见问题快速修复
