@@ -1,0 +1,80 @@
+# Operator 专用域桥接配置
+# 
+# 此配置仅包含 operator 文件夹中 Foxglove 扩展实际使用的话题
+# 最小化带宽消耗，只桥接必需的话题
+#
+# 使用方法：
+#   cd operator
+#   export ROS_DOMAIN_ID=100
+#   ros2 run domain_bridge domain_bridge $(pwd)/domain_bridge_operator.yaml
+
+name: operator_minimal_bridge
+from_domain: 70
+to_domain: 100
+
+topics:
+
+  # ========================================
+  # 📥 从无人机接收 (域 70 → 100)
+  # ========================================
+  
+  # --- geofence-human-visualizer 需要的话题 ---
+  
+  # 无人机位置（必需 - 在地图上显示无人机）
+  /dtc_mrsd_/mavros/global_position/global:
+    type: sensor_msgs/msg/NavSatFix
+    from_domain: 70
+    to_domain: 100
+  
+  # 无人机航向（必需 - 显示无人机朝向箭头）
+  /dtc_mrsd_/mavros/global_position/compass_hdg:
+    type: std_msgs/msg/Float64
+    from_domain: 70
+    to_domain: 100
+
+  # 无人机高度（必需 - 显示无人机高度）
+  /dtc_mrsd_/mavros/global_position/rel_alt:
+    type: std_msgs/msg/Float64
+    from_domain: 70
+    to_domain: 100
+  
+  # 地理围栏边界（必需 - 显示飞行区域）
+  /robot_1/mavros/geofence/fences:
+    type: mavros_msgs/msg/WaypointList
+    from_domain: 70
+    to_domain: 100
+  
+  /gimbal_attitude:
+    type: geometry_msgs/msg/Vector3
+    from_domain: 70
+    to_domain: 100  
+
+  # ========================================
+  # 📤 发送到无人机 (域 100 → 70)
+  # ========================================
+  
+  # --- geofence-human-visualizer 发布 ---
+  
+  # 选定的航点（必需 - 操作员点击地图选择航点）
+  /selected_waypoint:
+    type: sensor_msgs/msg/NavSatFix
+    from_domain: 100
+    to_domain: 70
+  
+  # --- behavior-tree-controller 发布 ---
+  
+  # 行为树命令（必需 - 起飞/降落/导航等控制）
+  /dtc_mrsd_/behavior_tree_commands:
+    type: behavior_tree_msgs/msg/BehaviorTreeCommands
+    from_domain: 100
+    to_domain: 70
+  
+  # --- gimbal 控制器发布 ---
+  
+  # 云台遥控（必需 - 手柄或虚拟控制器）
+  /gimbal/teleop:
+    type: sensor_msgs/msg/Joy
+    from_domain: 100
+    to_domain: 70
+
+
