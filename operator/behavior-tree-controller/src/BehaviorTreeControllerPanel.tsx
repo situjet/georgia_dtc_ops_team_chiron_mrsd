@@ -121,6 +121,67 @@ function BehaviorTreeControllerPanel({ context }: { context: PanelExtensionConte
   // 强制使用 ROS 模式（修复 dataSourceProfile = undefined 的问题）
   const useRos = context.dataSourceProfile === "ros1" || context.dataSourceProfile === "ros2" || context.dataSourceProfile === undefined;
 
+  // 自定义行为树消息的 datatypes（用于 Foxglove advertise）
+  // 形状与 @foxglove/rosmsg-msgs-common 一致：{ name, definitions: [{ name, type, isComplex, isArray, ... }] }
+  const btDatatypes = useRef<Map<string, unknown>>(new Map<string, unknown>([
+    [
+      "behavior_tree_msgs/BehaviorTreeCommand",
+      {
+        name: "behavior_tree_msgs/BehaviorTreeCommand",
+        definitions: [
+          { name: "condition_name", type: "string", isComplex: false, isArray: false },
+          { name: "status", type: "int8", isComplex: false, isArray: false },
+        ],
+      },
+    ],
+    [
+      "behavior_tree_msgs/BehaviorTreeCommands",
+      {
+        name: "behavior_tree_msgs/BehaviorTreeCommands",
+        definitions: [
+          { name: "commands", type: "behavior_tree_msgs/BehaviorTreeCommand", isComplex: true, isArray: true },
+        ],
+      },
+    ],
+  ]));
+
+  // 广告帮助函数：按多种形式尝试，以兼容不同 bridge/Studio 版本
+  const tryAdvertiseRos = (topic: string): boolean => {
+    if (!context.advertise) {
+      console.warn("[BehaviorTree] advertise API not available (tryAdvertiseRos)");
+      return false;
+    }
+    try {
+      context.advertise(topic, "behavior_tree_msgs/BehaviorTreeCommands", {
+        datatypes: btDatatypes.current,
+      });
+      return true;
+    } catch (e1) {
+      console.warn("[BehaviorTree] advertise with datatypes failed, retrying without datatypes:", e1);
+      try {
+        context.advertise(topic, "behavior_tree_msgs/BehaviorTreeCommands");
+        return true;
+      } catch (e2) {
+        console.warn("[BehaviorTree] advertise without datatypes failed, trying legacy '/msg' schema:", e2);
+        try {
+          context.advertise(topic, "behavior_tree_msgs/msg/BehaviorTreeCommands", {
+            datatypes: btDatatypes.current,
+          });
+          return true;
+        } catch (e3) {
+          console.warn("[BehaviorTree] legacy '/msg' with datatypes failed, final attempt without datatypes:", e3);
+          try {
+            context.advertise(topic, "behavior_tree_msgs/msg/BehaviorTreeCommands");
+            return true;
+          } catch (e4) {
+            console.error("[BehaviorTree] ✗ All advertise attempts failed:", e4);
+            return false;
+          }
+        }
+      }
+    }
+  };
+
   const ensureAdvertised = () => {
     const mode: "ros" | "custom" = useRos ? "ros" : "custom";
     const topic = cfg.publishTopic;
@@ -140,9 +201,12 @@ function BehaviorTreeControllerPanel({ context }: { context: PanelExtensionConte
 
     try {
       if (mode === "ros") {
-        console.log("[BehaviorTree] Calling context.advertise with behavior_tree_msgs/msg/BehaviorTreeCommands (ROS mode)");
-        // 使用 ROS 2 的完整消息路径格式：package_name/msg/MessageType
-        context.advertise(topic, "behavior_tree_msgs/msg/BehaviorTreeCommands");
+        console.log("[BehaviorTree] Advertising (ROS mode) on", topic);
+        const ok = tryAdvertiseRos(topic);
+        if (!ok) {
+          // 不标记 advertisedRef，等待下次重试
+          return;
+        }
         console.log("[BehaviorTree] ✓ Advertised");
       } else {
         console.log("[BehaviorTree] Calling context.advertise with behavior_tree/Commands (custom mode)");
@@ -168,7 +232,7 @@ function BehaviorTreeControllerPanel({ context }: { context: PanelExtensionConte
 
   const sendCommand = (commandName: string, options: { active: boolean }) => {
     console.log("[BehaviorTree] sendCommand called:", commandName, options);
-    
+
     if (!context.publish) {
       console.warn("[BehaviorTree] publish API not available");
       return;
@@ -177,19 +241,19 @@ function BehaviorTreeControllerPanel({ context }: { context: PanelExtensionConte
     // Ensure topic is advertised before publishing (like gimbal)
     ensureAdvertised();
 
+    // Status: SUCCESS=2 (activate), FAILURE=0 (deactivate)
+    // CRITICAL: Like AirStack_GCS, send ALL commands with their statuses
+    // The selected command is SUCCESS, all others are FAILURE
+    const commandsList = BEHAVIOR_COMMANDS.map((cmd) => ({
+      condition_name: cmd.name,
+      status: cmd.name === commandName && options.active ? 2 : 0, // SUCCESS or FAILURE
+    }));
+
+    const msg = {
+      commands: commandsList,
+    };
+
     try {
-      // Status: SUCCESS=2 (activate), FAILURE=0 (deactivate)
-      // CRITICAL: Like AirStack_GCS, send ALL commands with their statuses
-      // The selected command is SUCCESS, all others are FAILURE
-      const commandsList = BEHAVIOR_COMMANDS.map((cmd) => ({
-        condition_name: cmd.name,
-        status: cmd.name === commandName && options.active ? 2 : 0, // SUCCESS or FAILURE
-      }));
-
-      const msg = {
-        commands: commandsList,
-      };
-
       // Use optional chaining like gimbal panel
       console.log("[BehaviorTree] Publishing message to", cfg.publishTopic, ":", msg);
       context.publish?.(cfg.publishTopic, msg);
@@ -207,6 +271,26 @@ function BehaviorTreeControllerPanel({ context }: { context: PanelExtensionConte
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error("[BehaviorTree] ✗ Failed to publish:", errMsg);
+      // 针对 "never advertised" / "unknown channel" 自动重试一次
+      if (/never advertised|unknown channel/i.test(errMsg)) {
+        console.warn("[BehaviorTree] Publish failed due to not advertised; retrying advertise + publish");
+        try {
+          advertisedRef.current = {};
+          const ok = tryAdvertiseRos(cfg.publishTopic);
+          if (ok) {
+            context.publish?.(cfg.publishTopic, msg);
+            console.log("[BehaviorTree] ✓ Message published after re-advertise");
+            const commandLabel =
+              BEHAVIOR_COMMANDS.find((cmd) => cmd.name === commandName)?.label ?? commandName;
+            setLastSentCommand(`${commandLabel} (${options.active ? "activate" : "deactivate"})`);
+            setStatus(`Sent: ${commandLabel}`);
+            setTimeout(() => setStatus(`Ready`), 2000);
+            return;
+          }
+        } catch (err2) {
+          console.error("[BehaviorTree] ✗ Retry publish failed:", err2);
+        }
+      }
       setStatus(`发布失败: ${errMsg}`);
     }
   };

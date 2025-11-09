@@ -1,0 +1,39 @@
+?
+	->
+		(Auto Takeoff Commanded)
+		->
+			?
+				(Armed)
+				[Request AutoTakeoff]
+	->
+		(AutoLand Commanded)
+		?
+			[AutoLand]
+	->
+		(Arm Commanded)
+		?
+			(Armed)
+			[Arm]
+	->
+		(Disarm Commanded)
+		?
+			<!>
+				(Armed)
+			[Disarm]
+	->
+		(EStop Commanded)
+		?
+			[Hold]
+	->
+		(Survey Commanded)
+		->
+			[Survey]		
+	->
+		(Geofence Mapping Commanded)
+		?
+			[Geofence Mapping]
+	->
+		(Search Commanded)
+		?
+			[Search]
+

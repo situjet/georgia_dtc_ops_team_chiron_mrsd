@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>behavior_executive</name>
+  <version>1.0.0</version>
+  <description>Modular behavior tree executive for autonomous UAV operations with MAVROS integration</description>
+  <maintainer email="your-email@example.com">Your Team</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Core ROS 2 dependencies -->
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  
+  <!-- MAVROS -->
+  <depend>mavros_msgs</depend>
+  
+  <!-- Behavior Tree (required) -->
+  <depend>behavior_tree</depend>
+  <depend>behavior_tree_msgs</depend>
+  
+  <!-- Optional: Custom message packages -->
+  <!-- Uncomment if using airstack_msgs in your system -->
+  <!-- <depend>airstack_msgs</depend> -->
+  <!-- <depend>airstack_common</depend> -->
+  
+  <!-- Vision (optional) -->
+  <depend>vision_msgs</depend>
+  
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
