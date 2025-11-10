@@ -1,0 +1,16 @@
+recording_start_time_str: 2025-05-07_06-04-01
+output_directory: /home/dtc/humanflow/ros2_ghadron_gimbal/mcap_recording/2025-05-07_06-04-01
+parameters:
+  output_base_dir: /home/dtc/humanflow/ros2_ghadron_gimbal/mcap_recording
+  topics_to_record:
+  - /camera/image_raw
+  - /robot_1/mavros/global_position/rel_alt
+  - /robot_1/mavros/global_position/global
+  - /robot_1/mavros/imu/data
+  - /robot_1/mavros/global_position/compass_hdg
+  - /gimbal_attitude
+  monitor_interval_sec: 5.0
+  disk_threshold_gb: 2.0
+  shutdown_timeout_sec: 15.0
+ros_details:
+  ros_distribution: humble

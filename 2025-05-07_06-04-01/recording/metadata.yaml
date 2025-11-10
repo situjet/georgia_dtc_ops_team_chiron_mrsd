@@ -1,0 +1,84 @@
+rosbag2_bagfile_information:
+  version: 5
+  storage_identifier: mcap
+  duration:
+    nanoseconds: 269223283264
+  starting_time:
+    nanoseconds_since_epoch: 1746597842706139680
+  message_count: 57162
+  topics_with_message_count:
+    - topic_metadata:
+        name: /robot_1/mavros/imu/data
+        type: sensor_msgs/msg/Imu
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 2\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 13390
+    - topic_metadata:
+        name: /camera/image_raw
+        type: sensor_msgs/msg/Image
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 2\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 978
+    - topic_metadata:
+        name: /robot_1/mavros/global_position/rel_alt
+        type: std_msgs/msg/Float64
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 2\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 13394
+    - topic_metadata:
+        name: /robot_1/mavros/global_position/global
+        type: sensor_msgs/msg/NavSatFix
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 2\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 13394
+    - topic_metadata:
+        name: /robot_1/mavros/global_position/compass_hdg
+        type: std_msgs/msg/Float64
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 2\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 13389
+    - topic_metadata:
+        name: /gimbal_attitude
+        type: geometry_msgs/msg/Vector3
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 2617
+  compression_format: ""
+  compression_mode: ""
+  relative_file_paths:
+    - recording_0.mcap
+    - recording_1.mcap
+    - recording_2.mcap
+    - recording_3.mcap
+    - recording_4.mcap
+  files:
+    - path: recording_0.mcap
+      starting_time:
+        nanoseconds_since_epoch: 1746597842706139680
+      duration:
+        nanoseconds: 59995361248
+      message_count: 12566
+    - path: recording_1.mcap
+      starting_time:
+        nanoseconds_since_epoch: 1746597902707385664
+      duration:
+        nanoseconds: 59999394368
+      message_count: 12807
+    - path: recording_2.mcap
+      starting_time:
+        nanoseconds_since_epoch: 1746597962726014720
+      duration:
+        nanoseconds: 59999293792
+      message_count: 12787
+    - path: recording_3.mcap
+      starting_time:
+        nanoseconds_since_epoch: 1746598022731637024
+      duration:
+        nanoseconds: 59995683200
+      message_count: 12781
+    - path: recording_4.mcap
+      starting_time:
+        nanoseconds_since_epoch: 1746598082731696544
+      duration:
+        nanoseconds: 29197726400
+      message_count: 6221
