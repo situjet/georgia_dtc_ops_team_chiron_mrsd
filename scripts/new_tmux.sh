@@ -63,17 +63,17 @@ tmux send-keys "source /opt/ros/humble/setup.bash && export ROS_DOMAIN_ID=100 &&
 tmux select-pane -t 1
 tmux send-keys "./Downloads/QGroundControl.AppImage" Enter
 
-# Pane 2: RTSP Stream (Remote) - Send to TWO ports
+# Pane 2: RTSP Stream (Remote) - v4l2 camera capture and H264 encode
 tmux select-pane -t 2
 tmux send-keys "bash dtc.sh" Enter
 sleep 5
-# Hardware decode test + UDP forward (no re-encoding, low CPU):
-tmux send-keys "gst-launch-1.0 -v rtspsrc location=rtsp://10.3.1.124:8556/ghadron protocols=tcp latency=1500 ! rtph265depay ! h265parse ! tee name=t t. ! queue ! nvv4l2decoder ! fakesink t. ! queue ! rtph265pay config-interval=1 pt=96 ! tee name=udp_tee udp_tee. ! queue ! udpsink host=10.3.1.10 port=5004 sync=false udp_tee. ! queue ! udpsink host=10.3.1.10 port=5005 sync=false" Enter
+# Camera capture with hardware encoding to multiple destinations:
+tmux send-keys "gst-launch-1.0 -e v4l2src device=/dev/video4 ! video/x-raw,format=YUY2,width=1280,height=720,framerate=15/1 ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12' ! nvv4l2h264enc maxperf-enable=1 control-rate=1 bitrate=4000000 iframeinterval=15 idrinterval=15 insert-sps-pps=true preset-level=1 ! h264parse ! rtph264pay config-interval=1 pt=96 ! multiudpsink clients=10.3.1.10:5000,10.3.1.10:5001 sync=false async=false" Enter
 
-# Pane 3: Local Receiver with Recording
+# Pane 3: Local Receiver
 tmux select-pane -t 3
 sleep 5  # Wait for remote stream to start
-tmux send-keys "gst-launch-1.0 -e -v udpsrc port=5004 caps='application/x-rtp,media=video,clock-rate=90000,encoding-name=H265,payload=96' ! rtpjitterbuffer latency=500 drop-on-latency=true ! rtph265depay ! h265parse config-interval=-1 ! tee name=t t. ! queue max-size-buffers=0 max-size-time=0 max-size-bytes=0 ! avdec_h265 ! videoconvert ! autovideosink sync=false t. ! queue max-size-buffers=0 max-size-time=0 max-size-bytes=0 ! matroskamux writing-app=GStreamer ! filesink location=output_\$(date +%Y%m%d_%H%M%S).mkv" Enter
+tmux send-keys "gst-launch-1.0 -v udpsrc port=5000 caps=\"application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96\" ! rtpjitterbuffer latency=50 ! rtph264depay ! queue max-size-buffers=1 leaky=downstream ! h264parse ! nvh264dec ! queue max-size-buffers=1 leaky=downstream ! videoconvert ! glimagesink sync=false" Enter
 
 # Pane 4: VLM Geolocator (Refactored) - Domain 100, publishes to /casualty_geolocated
 tmux select-pane -t 4
